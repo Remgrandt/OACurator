@@ -22,7 +22,7 @@ on:
         description: "Mark the GitHub Release as a prerelease."
         required: true
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -193,8 +193,15 @@ jobs:
           if ($installers.Count -eq 0) {
             throw "No Windows installer exe was produced."
           }
-          Get-ChildItem $bundleDir -File | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination release-assets
+          foreach ($installer in $installers) {
+            $assetName = $installer.Name -replace '\s+', '.'
+            Copy-Item -LiteralPath $installer.FullName -Destination (Join-Path "release-assets" $assetName)
+
+            $signaturePath = "$($installer.FullName).sig"
+            if (-not (Test-Path -LiteralPath $signaturePath)) {
+              throw "No updater signature was produced for $($installer.Name)."
+            }
+            Copy-Item -LiteralPath $signaturePath -Destination (Join-Path "release-assets" "$assetName.sig")
           }
 
       - name: Generate updater manifest
