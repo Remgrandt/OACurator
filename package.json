@@ -1,0 +1,48 @@
+{
+  "name": "oa-curator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first desktop catalog for original art collectors.",
+  "author": "Remgrandt Works",
+  "copyright": "Copyright (c) 2026 Remgrandt Works. All rights reserved.",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Remgrandt/OACurator.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:tauri": "npm run build:frontend && vite preview --host 127.0.0.1 --port 1420 --strictPort",
+    "dev:tauri:live": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "npm run docs:build && npm run build:frontend",
+    "build:frontend": "npm run typecheck && vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "docs:build": "node scripts/run-mkdocs.mjs build --strict",
+    "docs:serve": "node scripts/run-mkdocs.mjs serve",
+    "check:frontend": "npm run typecheck && npm run docs:build && npm run build:frontend",
+    "check:backend": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "check:release": "npm run check:frontend && npm run check:backend && git diff --check",
+    "tauri": "tauri",
+    "release:windows": "npm run tauri -- build --bundles nsis"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
+    "allotment": "^1.20.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "~5.8.3",
+    "vite": "^8.0.16"
+  }
+}

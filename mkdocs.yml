@@ -1,0 +1,65 @@
+# Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+site_name: OA Curator User Guide
+site_description: User documentation for OA Curator, a local-first desktop app for original art collectors.
+docs_dir: docs/user
+site_dir: public/help
+use_directory_urls: false
+strict: true
+
+theme:
+  name: material
+  logo: assets/oac-logo.svg
+  favicon: assets/oac-logo.svg
+  palette:
+    - scheme: slate
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    - scheme: default
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Core Concepts: concepts.md
+  - Portable Data and OAA: portable-data-oaa.md
+  - Application Interface: application-interface.md
+  - Importing From ComicArtFans: importing-caf.md
+  - Importing From SNIKT.com: importing-snikt.md
+  - Importing From Raremarq: importing-raremarq.md
+  - Importing OAA Archives: importing-oaa.md
+  - Metadata: metadata.md
+  - Exporting Artwork: exports.md
+  - Exporting Web Images: exporting-web.md
+  - Exporting For SNIKT.com: exporting-snikt.md
+  - Exporting To Raremarq: exporting-raremarq.md
+  - Exporting OAA Archives: exporting-oaa.md
+  - File Safety: file-safety.md
+  - Privacy: privacy.md
+  - Legal: legal.md
+  - Troubleshooting: troubleshooting.md
+  - Notices: notices.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+
+extra_css:
+  - stylesheets/oac-help.css
+
+extra_javascript:
+  - javascripts/external-links.js
+
+extra:
+  generator: false

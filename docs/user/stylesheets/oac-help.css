@@ -1,0 +1,62 @@
+/* Copyright (c) 2026 Remgrandt Works. All rights reserved. */
+
+:root {
+  --md-primary-fg-color: #bd93f9;
+  --md-primary-fg-color--light: #d6acff;
+  --md-primary-fg-color--dark: #8a5cf6;
+  --md-accent-fg-color: #ff79c6;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #fff8e8;
+  --md-default-fg-color: #1f1f1f;
+  --md-default-fg-color--light: #6c664b;
+  --md-code-bg-color: #e8e2d0;
+  --md-typeset-a-color: #644ac9;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #282a36;
+  --md-default-fg-color: #f8f8f2;
+  --md-default-fg-color--light: #bd93f9;
+  --md-code-bg-color: #44475a;
+  --md-typeset-a-color: #8be9fd;
+}
+
+.oac-doc-logo,
+.oaa-doc-logo {
+  float: right;
+  height: auto;
+  margin: 0 0 1rem 1.5rem;
+  max-height: 128px;
+  max-width: 128px;
+  object-fit: contain;
+  width: min(128px, 100%);
+}
+
+.oaa-mark-note {
+  clear: both;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.8rem;
+}
+
+.oac-demo-embed {
+  aspect-ratio: 16 / 9;
+  clear: both;
+  margin: 1rem 0 1.5rem;
+  width: 100%;
+}
+
+.oac-demo-embed iframe {
+  border: 0;
+  height: 100%;
+  width: 100%;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .oac-doc-logo,
+  .oaa-doc-logo {
+    float: none;
+    margin: 0 auto 1rem;
+  }
+}

@@ -1,0 +1,196 @@
+OA CURATOR SOURCE-AVAILABLE FREEWARE LICENSE
+Version 1.0
+
+Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+Remgrandt Works is a trade name of Remgrandt Games LLC.
+
+OA Curator, including its source code, binaries, assets, documentation, project files, names, logos, and related materials, is proprietary software owned by Remgrandt Games LLC.
+
+OA Curator is not open source.
+
+This license grants limited permission to download, view, build, install, and use OA Curator without paying a license fee, subject to the restrictions below. All rights not expressly granted are reserved by Remgrandt Games LLC.
+
+1. Definitions
+
+"OA Curator" means the OA Curator software project and all related source code, binaries, installers, assets, documentation, configuration files, project files, scripts, build files, and other materials owned by Remgrandt Games LLC.
+
+"Official Copy" means a copy of OA Curator obtained directly from Remgrandt Games LLC or from a source expressly authorized in writing by Remgrandt Games LLC.
+
+"Unmodified Copy" means a copy of OA Curator that has not been changed, patched, altered, translated, adapted, recompiled with changes, repackaged, renamed, rebranded, combined into another product, or otherwise modified from the version published by Remgrandt Games LLC.
+
+"You" means any person or entity that downloads, views, clones, forks, builds, installs, runs, or otherwise uses OA Curator.
+
+2. Permission to Use
+
+Subject to this license, Remgrandt Games LLC grants you a limited, revocable, non-exclusive, non-transferable license to:
+
+a. download an Official Copy of OA Curator;
+
+b. view the source code for transparency, inspection, learning, and personal evaluation;
+
+c. build OA Curator from an Unmodified Copy of the source code for your own use;
+
+d. install and run an Official Copy or personally built Unmodified Copy of OA Curator; and
+
+e. make personal backup copies as reasonably necessary to install, run, back up, or restore your own authorized copy.
+
+You may use OA Curator for personal, hobby, nonprofit, educational, archival, collecting, or internal business purposes, provided that your use complies with this license.
+
+OA Curator may be downloaded and used without paying a license fee. This does not make OA Curator open source, public domain, freely redistributable, or free of restrictions.
+
+3. No Modification
+
+You may not modify OA Curator.
+
+You may not alter, edit, patch, translate, adapt, recompile with changes, create derivative works from, remove notices from, obfuscate, deobfuscate, decompile, disassemble, reverse engineer, tamper with, or otherwise modify OA Curator, except to the extent such restriction is prohibited by applicable law.
+
+You may not use, publish, distribute, upload, share, release, or make available any modified version of OA Curator.
+
+Any modification, patching, tampering, unofficial build, or use of a modified copy is outside the scope of this license and is done entirely at your own risk.
+
+4. No Redistribution, Bundling, or Repackaging
+
+You may not distribute OA Curator.
+
+You may not sell, sublicense, rent, lease, lend, give away, publish, upload, mirror, host, redistribute, rehost, bundle, package, repackage, archive for public access, include in another product, include in another installer, include in a software collection, or otherwise make OA Curator available to any third party.
+
+You may not publish or distribute OA Curator source archives, binaries, installers, portable builds, container images, build artifacts, release assets, compiled applications, modified versions, or derivative works.
+
+You may not include OA Curator in any package manager, app store, software repository, installer, bundle, mirror, download site, archive, container registry, operating system distribution, commercial product, service offering, or other distribution channel without prior written permission from Remgrandt Games LLC.
+
+This includes, without limitation, apt, deb, rpm, Flatpak, Snap, Homebrew, Chocolatey, WinGet, npm, PyPI, Docker Hub, GitHub Packages, Microsoft Store, Apple App Store, Mac App Store, or any similar system.
+
+5. GitHub Forks
+
+If this repository is made public on GitHub, GitHub users may be able to view and fork the repository through GitHub's normal service functionality to the extent permitted by GitHub's Terms of Service.
+
+A GitHub-hosted fork is not a grant of any additional license rights.
+
+A fork, clone, checkout, archive, or copy of OA Curator remains subject to this license.
+
+You may not use a fork to modify OA Curator, publish modified versions, create derivative works, publish GitHub Releases, upload release assets, distribute source archives or binaries, publish build artifacts, repackage OA Curator, mirror OA Curator, or make OA Curator available through any package manager, app store, software repository, installer, bundle, mirror, download site, or distribution channel.
+
+6. No Circumvention of Official Distribution
+
+Official downloads of OA Curator must come from Remgrandt Games LLC or from sources expressly authorized in writing by Remgrandt Games LLC.
+
+You may not present yourself as an official source for OA Curator.
+
+You may not imply that any fork, copy, build, package, mirror, installer, release, archive, or distribution channel is official, approved, endorsed, supported, maintained, or authorized by Remgrandt Games LLC unless Remgrandt Games LLC has expressly authorized it in writing.
+
+7. User Data
+
+This license does not give Remgrandt Games LLC ownership of your collection data, artwork scans, images, metadata, exports, notes, configuration files, databases, backups, or other content that you create, import, store, edit, organize, or manage using OA Curator.
+
+You are solely responsible for your data.
+
+You are solely responsible for maintaining backups of your data.
+
+You are solely responsible for verifying that OA Curator works correctly for your needs before relying on it.
+
+8. No Support, Maintenance, or Availability Obligation
+
+Remgrandt Games LLC has no obligation to provide support, maintenance, updates, bug fixes, compatibility fixes, security fixes, migration tools, documentation updates, new versions, continued downloads, continued source access, or continued availability of OA Curator.
+
+Remgrandt Games LLC may change, discontinue, remove, restrict, relicense, charge for, or replace future versions of OA Curator or related services at any time.
+
+9. Future Versions and Services
+
+This license applies only to the version of OA Curator distributed with this license.
+
+Remgrandt Games LLC may release future versions of OA Curator under different terms.
+
+Remgrandt Games LLC may offer optional paid features, paid builds, hosted services, cloud services, sync services, support services, consulting, commercial licenses, or other related products or services in the future.
+
+Nothing in this license grants you any right to future versions, paid features, hosted services, cloud services, sync services, support, maintenance, or commercial services.
+
+10. No Trademark or Branding Rights
+
+This license does not grant any right to use the names, trademarks, service marks, logos, trade dress, branding, product names, domain names, or other identifying marks of Remgrandt Games LLC, OA Curator, or any related project.
+
+You may not use the OA Curator name, Remgrandt Games LLC name, or related branding in a way that suggests endorsement, sponsorship, authorization, official status, or affiliation without prior written permission from Remgrandt Games LLC.
+
+11. Third-Party Components
+
+OA Curator may include, reference, or depend on third-party software, libraries, assets, tools, or other components.
+
+Third-party components are governed by their own licenses.
+
+This license applies only to materials owned by Remgrandt Games LLC.
+
+Nothing in this license is intended to restrict rights that you may have under the applicable licenses for third-party components.
+
+12. Feedback, Issues, and Contributions
+
+You may submit bug reports, feature requests, ideas, comments, and other non-code feedback through channels made available by Remgrandt Games LLC.
+
+By submitting feedback, you grant Remgrandt Games LLC a perpetual, worldwide, irrevocable, royalty-free, sublicensable license to use, copy, modify, publish, distribute, and otherwise exploit that feedback for any purpose without compensation, attribution, or obligation to you.
+
+This project is not accepting third-party code contributions unless Remgrandt Games LLC expressly agrees otherwise in writing.
+
+You may not submit code, patches, pull requests, modified files, or other copyrightable contributions unless Remgrandt Games LLC has expressly requested or authorized that contribution.
+
+Submitting feedback, issues, suggestions, code, patches, pull requests, or other materials does not give you ownership of OA Curator and does not change the terms of this license.
+
+13. Termination
+
+This license automatically terminates if you violate any of its terms.
+
+Upon termination, you must immediately stop using OA Curator and delete all copies of OA Curator in your possession or control, except copies you are legally required to retain.
+
+Termination does not limit any rights or remedies available to Remgrandt Games LLC.
+
+14. Disclaimer of Warranty
+
+OA Curator is provided "as is" and "as available," with all faults and without warranty of any kind.
+
+To the maximum extent permitted by law, Remgrandt Games LLC disclaims all warranties, promises, guarantees, representations, and conditions, whether express, implied, statutory, or otherwise.
+
+This includes, without limitation, any warranty of merchantability, fitness for a particular purpose, title, non-infringement, accuracy, reliability, availability, compatibility, performance, data integrity, security, privacy, quiet enjoyment, uninterrupted operation, error-free operation, absence of harmful components, absence of defects, absence of malware, absence of vulnerabilities, or suitability for any purpose.
+
+Remgrandt Games LLC does not warrant that OA Curator will preserve data, protect privacy, protect security, produce correct output, remain compatible with any operating system or third-party service, remain available, or function without errors, defects, interruptions, vulnerabilities, or harmful behavior.
+
+OA Curator may contain bugs, errors, vulnerabilities, compatibility problems, data-loss defects, security defects, incorrect output, destructive behavior, or other failures.
+
+You use OA Curator entirely at your own risk.
+
+15. Limitation of Liability
+
+To the maximum extent permitted by law, Remgrandt Games LLC and its owners, members, managers, officers, employees, contractors, contributors, licensors, suppliers, service providers, and affiliates will not be liable for any direct, indirect, incidental, consequential, special, exemplary, punitive, enhanced, or other damages arising from or related to OA Curator or this license.
+
+This includes, without limitation, damages for lost profits, lost revenue, lost business, business interruption, loss of goodwill, loss of data, corruption of data, deletion of data, damaged files, damaged devices, damaged systems, inaccurate records, privacy incidents, security incidents, unauthorized disclosure, unauthorized access, computer failure, device failure, network failure, inability to use OA Curator, procurement of substitute goods or services, or any other commercial, personal, technical, or data-related loss.
+
+This limitation applies even if Remgrandt Games LLC has been advised of the possibility of such damages and even if any remedy fails of its essential purpose.
+
+16. Indemnity
+
+To the maximum extent permitted by law, you agree to defend, indemnify, and hold harmless Remgrandt Games LLC and its owners, members, managers, officers, employees, contractors, contributors, licensors, suppliers, service providers, and affiliates from and against any claims, damages, losses, liabilities, costs, and expenses, including reasonable attorneys' fees, arising from or related to:
+
+a. your use of OA Curator;
+
+b. your modification, tampering, patching, reverse engineering, or misuse of OA Curator;
+
+c. your distribution, redistribution, bundling, packaging, mirroring, hosting, uploading, publishing, or making available of OA Curator;
+
+d. your violation of this license;
+
+e. your violation of any law or third-party right; or
+
+f. your data, files, images, metadata, exports, backups, or other content.
+
+17. No Waiver
+
+Failure by Remgrandt Games LLC to enforce any provision of this license does not waive the right to enforce that provision or any other provision later.
+
+18. Severability
+
+If any provision of this license is found unenforceable, that provision will be enforced to the maximum extent permitted by law, and the remaining provisions will remain in full force and effect.
+
+19. Entire License
+
+This license is the entire agreement between you and Remgrandt Games LLC regarding OA Curator, except for any separate written agreement signed by Remgrandt Games LLC.
+
+20. Reservation of Rights
+
+All rights not expressly granted in this license are reserved by Remgrandt Games LLC.

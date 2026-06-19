@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+[package]
+name = "oa-curator"
+version = "0.1.0"
+description = "Local-first desktop catalog for original art scans"
+authors = ["Remgrandt Works"]
+edition = "2021"
+repository = "https://github.com/Remgrandt/OACurator"
+homepage = "https://remgrandt.dev"
+readme = "../README.md"
+license-file = "../LICENSE"
+
+[lib]
+name = "oa_curator_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+csv = "1"
+directories = "6"
+image = { version = "0.25", features = ["jpeg", "png", "tiff"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sanitize-filename = "0.5"
+thiserror = "2"
+tiff = "0.11"
+unicode-normalization = "0.1"
+url = "2"
+tauri-plugin-dialog = "2"
+trash = "5.2.6"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+[dev-dependencies]
+tempfile = "3"

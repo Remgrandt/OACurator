@@ -1,0 +1,4 @@
+# Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+mkdocs>=1.6,<2
+mkdocs-material>=9.5,<10

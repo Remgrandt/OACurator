@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OA Curator",
+  "version": "0.1.0",
+  "identifier": "dev.remgrandt.oacurator",
+  "build": {
+    "beforeDevCommand": "npm run dev:tauri",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "OA Curator",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "backgroundColor": "#282A36",
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "copyright": "Copyright (c) 2026 Remgrandt Works. All rights reserved.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["oaa"],
+        "name": "Original Art Archive",
+        "description": "Original Art Archive",
+        "mimeType": "application/vnd.original-art-archive+zip",
+        "role": "Editor",
+        "rank": "Owner",
+        "exportedType": {
+          "identifier": "com.remgrandtgames.original-art-archive",
+          "conformsTo": ["public.zip-archive", "public.data"]
+        }
+      }
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1MjQ2RTg5RkZEQTVFRkIKUldUN1h0ci9pVzRrbGZuVkFBT0svZnRvRUUyclEyWXNMaHZpVnA2d3VFdHFYaFQ3aW9QTG85NXUK",
+      "endpoints": [
+        "https://github.com/Remgrandt/OACurator/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

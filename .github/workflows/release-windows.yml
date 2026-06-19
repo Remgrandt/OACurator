@@ -1,0 +1,293 @@
+# Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+name: Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag. Leave blank to use beta-${run_number}."
+        required: false
+        type: string
+      release_name:
+        description: "Release title. Leave blank to use OA Curator ${tag_name}."
+        required: false
+        type: string
+      draft:
+        description: "Create the GitHub Release as a draft."
+        required: true
+        type: boolean
+        default: true
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease."
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+jobs:
+  windows-release:
+    name: Build and publish Windows release
+    runs-on: windows-latest
+
+    steps:
+      - name: Disable Git line ending conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm official release repository
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:GITHUB_REPOSITORY -ne "Remgrandt/OACurator") {
+            throw "This workflow publishes official OA Curator releases only from Remgrandt/OACurator."
+          }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install documentation dependencies
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Check release source
+        run: npm run check:release
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ inputs.tag_name }}".Trim()
+          if (-not $tag) {
+            $tag = "beta-${{ github.run_number }}"
+          }
+
+          $title = "${{ inputs.release_name }}".Trim()
+          if (-not $title) {
+            $title = "OA Curator $tag"
+          }
+
+          "tag_name=$tag" >> $env:GITHUB_OUTPUT
+          "release_name=$title" >> $env:GITHUB_OUTPUT
+
+      - name: Build Windows installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run release:windows
+
+      - name: Validate Azure Artifact Signing configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $required = [ordered]@{
+            AZURE_ARTIFACT_SIGNING_ENDPOINT = "${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}"
+            AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME = "${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}"
+            AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME = "${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}"
+          }
+
+          foreach ($entry in $required.GetEnumerator()) {
+            if ([string]::IsNullOrWhiteSpace($entry.Value)) {
+              throw "Missing GitHub repository variable $($entry.Key)."
+            }
+          }
+
+          if ($required.AZURE_ARTIFACT_SIGNING_ENDPOINT -notmatch '^https://.+\.codesigning\.azure\.net/?$') {
+            throw "AZURE_ARTIFACT_SIGNING_ENDPOINT must be a region endpoint such as https://eus.codesigning.azure.net/."
+          }
+
+      - name: Azure login for Artifact Signing
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows installer with Azure Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\src-tauri\target\release\bundle\nsis
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: OA Curator
+          description-url: https://github.com/Remgrandt/OACurator
+
+      - name: Verify Windows installer Authenticode signature
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installers = Get-ChildItem "src-tauri\target\release\bundle\nsis" -Filter *.exe -File
+          if ($installers.Count -eq 0) {
+            throw "No Windows installer exe was produced."
+          }
+
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+            if ($signature.Status -ne "Valid") {
+              throw "Authenticode signature for $($installer.Name) is $($signature.Status): $($signature.StatusMessage)"
+            }
+            Write-Host "Verified Authenticode signature for $($installer.Name): $($signature.SignerCertificate.Subject)"
+          }
+
+      - name: Regenerate Tauri updater signatures for signed installers
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installers = Get-ChildItem "src-tauri\target\release\bundle\nsis" -Filter *.exe -File
+          if ($installers.Count -eq 0) {
+            throw "No Windows installer exe was produced."
+          }
+
+          foreach ($installer in $installers) {
+            $signaturePath = "$($installer.FullName).sig"
+            Remove-Item -LiteralPath $signaturePath -Force -ErrorAction SilentlyContinue
+            & npx --no-install tauri signer sign $installer.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to regenerate Tauri updater signature for $($installer.Name)."
+            }
+            if (-not (Test-Path -LiteralPath $signaturePath)) {
+              throw "Tauri updater signature was not produced for $($installer.Name)."
+            }
+          }
+
+      - name: Collect release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          $bundleDir = "src-tauri\target\release\bundle\nsis"
+          $installers = Get-ChildItem $bundleDir -Filter *.exe -File
+          if ($installers.Count -eq 0) {
+            throw "No Windows installer exe was produced."
+          }
+          Get-ChildItem $bundleDir -File | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination release-assets
+          }
+
+      - name: Generate updater manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseTag = "${{ steps.release_meta.outputs.tag_name }}"
+          $releaseNotes = @"
+          OA Curator public beta build.
+
+          Source commit: $env:GITHUB_SHA
+          License: source-available freeware, not open source.
+          "@
+
+          $updaterArtifact = Get-ChildItem release-assets -File |
+            Where-Object { $_.Name -match '\.exe$' } |
+            Select-Object -First 1
+          if (-not $updaterArtifact) {
+            throw "No signed Windows updater installer was produced."
+          }
+
+          $signaturePath = "$($updaterArtifact.FullName).sig"
+          if (-not (Test-Path -LiteralPath $signaturePath)) {
+            throw "No updater signature was produced for $($updaterArtifact.Name)."
+          }
+
+          $config = Get-Content src-tauri\tauri.conf.json -Raw | ConvertFrom-Json
+          $assetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$releaseTag/$($updaterArtifact.Name)"
+          $latest = [ordered]@{
+            version = $config.version
+            notes = $releaseNotes.Trim()
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = (Get-Content -Raw -LiteralPath $signaturePath).Trim()
+                url = $assetUrl
+              }
+            }
+          }
+
+          $latest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 release-assets\latest.json
+
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem release-assets -File | ForEach-Object {
+            $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+            "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content -Encoding UTF8 release-assets\SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oa-curator-windows-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ steps.release_meta.outputs.tag_name }}"
+          $title = "${{ steps.release_meta.outputs.release_name }}"
+
+          $notes = @"
+          OA Curator public beta build.
+
+          Source commit: $env:GITHUB_SHA
+          License: source-available freeware, not open source.
+          "@
+
+          $assets = Get-ChildItem release-assets -File | ForEach-Object { $_.FullName }
+          if ($assets.Count -eq 0) {
+            throw "No release assets found."
+          }
+
+          $releaseArgs = @("release", "create", $tag)
+          $releaseArgs += $assets
+          $releaseArgs += @(
+            "--repo", $env:GITHUB_REPOSITORY,
+            "--target", $env:GITHUB_SHA,
+            "--title", $title,
+            "--notes", $notes
+          )
+
+          if ("${{ inputs.draft }}" -eq "true") {
+            $releaseArgs += "--draft"
+          }
+          if ("${{ inputs.prerelease }}" -eq "true") {
+            $releaseArgs += "--prerelease"
+          }
+
+          gh @releaseArgs

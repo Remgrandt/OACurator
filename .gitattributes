@@ -1,0 +1,7 @@
+# Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+* text=auto
+
+*.png binary
+*.ico binary
+*.icns binary

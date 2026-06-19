@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="616" height="604" viewBox="194 201 616 604" role="img" aria-labelledby="title desc" version="1.1" id="svg56" sodipodi:docname="oac-logo-dotted-trace.svg" inkscape:version="1.4.2 (f4327f4, 2025-05-13)" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview id="namedview56" pagecolor="#ffffff" bordercolor="#1c1c1c" borderopacity="0.25" inkscape:showpageshadow="2" inkscape:pageopacity="0.0" inkscape:pagecheckerboard="0" inkscape:deskcolor="#ffffff" inkscape:zoom="0.70710678" inkscape:cx="-251.73001" inkscape:cy="307.59145" inkscape:window-width="2560" inkscape:window-height="1369" inkscape:window-x="-8" inkscape:window-y="-8" inkscape:window-maximized="1" inkscape:current-layer="svg56" />
+  <title id="title">OAC logo dotted trace</title>
+  <desc id="desc">Three-color SVG trace of the OAC logo variant with black dots over the red exclamation point dot.</desc>
+  <defs id="defs1">
+    <clipPath id="clip-action-panel">
+      <path d="M 646.955367,269 H 811 V 367 H 674.944934 Z" id="path-action-panel-slanted-clip" />
+    </clipPath>
+    <clipPath id="clip-face-panel">
+      <path d="M655 385H811V623H736Z" id="path1" />
+    </clipPath>
+    <clipPath id="clip-exclamation-point-dot-red-shape">
+      <path d="M 742.12605,641 H 811 V 743 H 776.840336 Z" id="path-exclamation-point-dot-red-shape-clip" />
+    </clipPath>
+  </defs>
+  <g id="c-shaped-border" fill="none" stroke="#f8efe3" stroke-width="50" stroke-linecap="butt" stroke-linejoin="round">
+    <path d="M810 226H322C265 226 219 272 219 333V676C219 733 265 780 322 780H810" id="path3" />
+  </g>
+  <g id="oa-text" fill="#f8efe3" fill-rule="evenodd">
+    <path id="letter-o" d="       M493 508.5       A115.5 121.5 0 1 1 262 508.5       A115.5 121.5 0 1 1 493 508.5       Z       M443 508.5       A65.5 69.5 0 1 0 312 508.5       A65.5 69.5 0 1 0 443 508.5       Z" />
+    <path id="letter-a" d="       M561 390       H600       L681 628       H630       L616 586       H544       L529 628       H478       Z       M579 485       L556 545       H604       Z" />
+  </g>
+  <g id="action-panel" transform="matrix(1.1916205,0,0,1,-155.40427,0)">
+    <path id="action-panel-white-rectangle" d="M 646.955367,269 H 811 V 367 H 674.944934 Z" fill="#f8efe3" />
+
+  </g>
+  <g id="face-panel">
+    <path id="face-panel-white-trapezoid" d="M655 385H811V623H736Z" fill="#f8efe3" style="fill:#f8efe3" />
+
+  </g>
+  <g id="exclamation-point-dot">
+    <path id="exclamation-point-dot-red-rectangle" d="M 742.12605,641 H 811 V 743 H 776.840336 Z" fill="#b43a2c" />
+
+  </g>
+</svg>
