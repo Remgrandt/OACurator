@@ -22,6 +22,12 @@ Use **New Artwork** in the selected Gallery.
 
 OA Curator assigns locally created Artworks an ID such as `OAC-00001`. If you later add ComicArtFans, SNIKT.com, or Raremarq URLs, OA Curator stores those gallery-site IDs separately. The visible Artwork ID can be changed in **Preferences** to favor OAC, CAF, SNIKT, or Raremarq labels.
 
+## Assign An Artwork To Another Gallery
+
+An Artwork can belong to more than one Gallery. Open the Artwork, find **Galleries** in the Artwork Properties panel, and use the Gallery add button to choose another Gallery.
+
+The same **Galleries** section shows all current Gallery assignments. Use the Gallery remove button beside a Gallery to remove that assignment. OA Curator disables removal when the Artwork belongs to only one Gallery.
+
 ## Attach A File Or Image
 
 Open the Artwork and use the attachment controls to add a file. JPG, PNG, and TIFF attachments can be rendered for previews and PNG exports. Other supported attachments remain file records.

@@ -46,6 +46,8 @@ const assetToolbarIcons = new Set([
   "cloud-upload",
   "move-left",
   "move-right",
+  "layers-plus",
+  "layers-minus",
 ]);
 
 export function CommandBar({

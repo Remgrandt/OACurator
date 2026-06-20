@@ -394,6 +394,16 @@ p {
   -webkit-mask-image: url("/icons/lucide/move-right.svg");
 }
 
+.icon-layers-plus {
+  mask-image: url("/icons/lucide/layers-plus.svg");
+  -webkit-mask-image: url("/icons/lucide/layers-plus.svg");
+}
+
+.icon-layers-minus {
+  mask-image: url("/icons/lucide/layers-minus.svg");
+  -webkit-mask-image: url("/icons/lucide/layers-minus.svg");
+}
+
 .icon-copy {
   mask-image: url("/icons/lucide/copy.svg");
   -webkit-mask-image: url("/icons/lucide/copy.svg");
@@ -1919,6 +1929,55 @@ p {
 .property-value select {
   min-height: 30px;
   padding: 5px 7px;
+}
+
+.gallery-membership-field,
+.gallery-membership-list,
+.gallery-membership-item {
+  display: grid;
+  gap: 6px;
+}
+
+.gallery-membership-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.gallery-membership-header .property-block-label {
+  min-width: 0;
+}
+
+.gallery-membership-list {
+  gap: 4px;
+}
+
+.gallery-membership-item {
+  grid-template-columns: minmax(0, 1fr) 28px;
+}
+
+.gallery-membership-name,
+.gallery-membership-empty {
+  align-items: center;
+  background: var(--surface-recessed);
+  border: 1px solid var(--border);
+  display: flex;
+  min-height: 30px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 5px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-membership-empty {
+  color: var(--muted);
+}
+
+.add-to-gallery-modal select {
+  margin-top: 4px;
+  width: 100%;
 }
 
 .property-value input[type="checkbox"] {

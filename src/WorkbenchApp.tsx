@@ -76,6 +76,7 @@ import {
 import type {
   AppPreferences,
   ArtistCreditForm,
+  AddArtworkToGalleryRequest,
   ArtworkIdLabelPreference,
   ArtworkDetail,
   ArtworkSummary,
@@ -194,6 +195,10 @@ type ArtworkMergeDraft = {
   isLoadingSource: boolean;
   isLoadingTarget: boolean;
   isMerging: boolean;
+};
+type AddToGalleryDraft = {
+  targetGalleryId: string;
+  isAdding: boolean;
 };
 type RenameOutcome = "renamed" | "canceled" | "renamed_reload_workspace";
 type DeleteExecutionOutcome = {
@@ -436,6 +441,8 @@ function WorkbenchApp() {
   const [pendingRename, setPendingRename] = useState<PendingRename | null>(null);
   const [galleryMerge, setGalleryMerge] = useState<GalleryMergeDraft | null>(null);
   const [artworkMerge, setArtworkMerge] = useState<ArtworkMergeDraft | null>(null);
+  const [addToGallery, setAddToGallery] = useState<AddToGalleryDraft | null>(null);
+  const [removingGalleryId, setRemovingGalleryId] = useState<number | null>(null);
   const [trashFailureReport, setTrashFailureReport] = useState<TrashFailureReport | null>(null);
   const [updateDialog, setUpdateDialog] = useState<UpdateDialogState | null>(null);
   const [workspaceCommandInFlight, setWorkspaceCommandInFlight] =
@@ -767,6 +774,11 @@ function WorkbenchApp() {
   }, [artworks, galleries]);
   const selectedGallery = galleries.find((gallery) => gallery.id === selectedGalleryId) ?? null;
   const selectedSummary = artworks.find((artwork) => artwork.id === selectedArtworkId) ?? null;
+  const addToGalleryOptions = useMemo(() => {
+    if (!selectedSummary) return [];
+    const currentGalleryIds = new Set(selectedSummary.gallery_ids);
+    return galleries.filter((gallery) => !currentGalleryIds.has(gallery.id));
+  }, [galleries, selectedSummary]);
   const inspectedCollection =
     inspectorTarget?.type === "collection" &&
     workspace?.collection?.id === inspectorTarget.collectionId
@@ -786,6 +798,10 @@ function WorkbenchApp() {
       : detail
         ? "Artwork Properties"
         : "Properties";
+  useEffect(() => {
+    setAddToGallery(null);
+    setRemovingGalleryId(null);
+  }, [selectedArtworkId]);
   useEffect(() => {
     if (exportDestinationIsAuto && selectedGallery) {
       const defaultDestination = parentDirectory(selectedGallery.manifest_path);
@@ -815,6 +831,147 @@ function WorkbenchApp() {
 
   function renderFilteredProperty(label: string, node: ReactNode) {
     return showProperty(label) ? node : null;
+  }
+
+  function renderGalleryMembershipProperty() {
+    const galleryMemberships = selectedSummary
+      ? selectedSummary.gallery_ids.map((galleryId, index) => ({
+          id: galleryId,
+          name:
+            selectedSummary.gallery_names[index] ??
+            galleries.find((gallery) => gallery.id === galleryId)?.name ??
+            `Gallery ${galleryId}`,
+        }))
+      : selectedGallery
+        ? [{ id: selectedGallery.id, name: selectedGallery.name }]
+        : [];
+    const canRemoveFromGallery = Boolean(selectedSummary && galleryMemberships.length > 1);
+    const canAddToGallery = Boolean(
+      workspace?.collection && selectedSummary && addToGalleryOptions.length > 0,
+    );
+    const buttonTitle = !workspace?.collection
+      ? "Open a Collection to add Artwork to another Gallery"
+      : canAddToGallery
+        ? "Add this Artwork to another Gallery"
+        : "This Artwork already belongs to every Gallery in the Collection";
+
+    return (
+      <section className="property-block gallery-membership-block">
+        <header className="gallery-membership-header">
+          <span className="property-block-label" title={propertyHelpForLabel("Gallery")}>
+            Galleries
+          </span>
+          <button
+            type="button"
+            className="property-icon-button gallery-membership-add"
+            aria-label="Add Artwork to Gallery"
+            disabled={!canAddToGallery || Boolean(addToGallery)}
+            title={buttonTitle}
+            onClick={startAddSelectedArtworkToGallery}
+          >
+            <ToolbarIcon name="layers-plus" />
+          </button>
+        </header>
+        <div className="gallery-membership-field">
+          <span className="gallery-membership-list" aria-label="Galleries containing this Artwork">
+            {galleryMemberships.length > 0 ? (
+              galleryMemberships.map((gallery) => {
+                const isRemoving = removingGalleryId === gallery.id;
+                const removeTitle = canRemoveFromGallery
+                  ? `Remove this Artwork from ${gallery.name}`
+                  : "Artwork must belong to at least one Gallery";
+                return (
+                  <span className="gallery-membership-item" key={gallery.id}>
+                    <span className="gallery-membership-name" title={gallery.name}>
+                      {gallery.name}
+                    </span>
+                    <button
+                      type="button"
+                      className="property-icon-button gallery-membership-remove"
+                      aria-label={`Remove Artwork from ${gallery.name}`}
+                      disabled={!canRemoveFromGallery || removingGalleryId !== null}
+                      title={isRemoving ? "Removing Artwork from Gallery" : removeTitle}
+                      onClick={() => void removeSelectedArtworkFromGallery(gallery.id, gallery.name)}
+                    >
+                      <ToolbarIcon name="layers-minus" />
+                    </button>
+                  </span>
+                );
+              })
+            ) : (
+              <span className="gallery-membership-empty">No Gallery</span>
+            )}
+          </span>
+        </div>
+      </section>
+    );
+  }
+
+  function renderAddToGalleryDialog() {
+    if (!addToGallery) return null;
+
+    return (
+      <div className="workspace-command-backdrop">
+        <section
+          className="workspace-command workspace-command-modal add-to-gallery-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-to-gallery-title"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !addToGallery.isAdding) {
+              event.preventDefault();
+              setAddToGallery(null);
+            }
+          }}
+        >
+          <h3 id="add-to-gallery-title">Add to Gallery</h3>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addSelectedArtworkToGallery();
+            }}
+          >
+            <label>
+              Gallery
+              <select
+                aria-label="Gallery to add Artwork to"
+                value={addToGallery.targetGalleryId}
+                disabled={addToGallery.isAdding}
+                autoFocus
+                onChange={(event) =>
+                  setAddToGallery({
+                    ...addToGallery,
+                    targetGalleryId: event.currentTarget.value,
+                  })
+                }
+              >
+                {addToGalleryOptions.map((gallery) => (
+                  <option key={gallery.id} value={gallery.id}>
+                    {gallery.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="dialog-actions">
+              <button
+                type="submit"
+                className="primary"
+                disabled={!addToGallery.targetGalleryId || addToGallery.isAdding}
+              >
+                {addToGallery.isAdding ? "Adding..." : "Add"}
+              </button>
+              <button
+                type="button"
+                disabled={addToGallery.isAdding}
+                onClick={() => setAddToGallery(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
+    );
   }
 
   useEffect(() => {
@@ -1571,6 +1728,127 @@ function WorkbenchApp() {
       return;
     }
     await createArtworkForGallery(gallery.id);
+  }
+
+  function startAddSelectedArtworkToGallery() {
+    const firstOption = addToGalleryOptions[0];
+    if (!selectedSummary || !firstOption) return;
+    setAddToGallery({
+      targetGalleryId: String(firstOption.id),
+      isAdding: false,
+    });
+  }
+
+  async function addSelectedArtworkToGallery() {
+    if (!workspace?.collection || !selectedSummary || !addToGallery || addToGallery.isAdding) {
+      return;
+    }
+    const targetGalleryId = Number(addToGallery.targetGalleryId);
+    const targetGallery = addToGalleryOptions.find((gallery) => gallery.id === targetGalleryId);
+    if (!targetGallery) {
+      setError("Choose a Gallery before adding the Artwork.");
+      return;
+    }
+
+    const flushResult = await flushMetadataAutosave();
+    if (flushResult === "failed") {
+      setError("Metadata save failed; Artwork was not added to the Gallery.");
+      return;
+    }
+
+    const request: AddArtworkToGalleryRequest = {
+      collection_id: workspace.collection.id,
+      artwork_id: selectedSummary.id,
+      gallery_id: targetGallery.id,
+    };
+    setAddToGallery({ ...addToGallery, isAdding: true });
+    try {
+      setError("");
+      const nextWorkspace = await invoke<WorkspaceState>("add_artwork_to_gallery_command", {
+        request,
+      });
+      setWorkspace(nextWorkspace);
+      setSelectedGalleryId(targetGallery.id);
+      setSelectedArtworkId(selectedSummary.id);
+      setInspectorTarget({ type: "artwork", artworkId: selectedSummary.id });
+      expandTreeNodes([
+        "collection",
+        treeKeyForGallery(targetGallery.id),
+        treeKeyForArtwork(selectedSummary.id),
+      ]);
+      const nextDetail = await invoke<ArtworkDetail>("artwork_detail_command", {
+        artworkId: selectedSummary.id,
+      });
+      const nextForm = setArtworkDetailFromSnapshot(nextDetail);
+      markMetadataAutosaveBaseline(nextDetail.id, nextForm);
+      setAddToGallery(null);
+      setStatus(`Artwork added to ${targetGallery.name}`);
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setAddToGallery((current) => (current ? { ...current, isAdding: false } : current));
+    }
+  }
+
+  async function removeSelectedArtworkFromGallery(galleryId: number, galleryName: string) {
+    if (!selectedSummary || removingGalleryId !== null || selectedSummary.gallery_ids.length <= 1) {
+      return;
+    }
+    const artworkId = selectedSummary.id;
+    const flushResult = await flushMetadataAutosave();
+    if (flushResult === "failed") {
+      setError("Metadata save failed; Artwork was not removed from the Gallery.");
+      return;
+    }
+
+    setRemovingGalleryId(galleryId);
+    try {
+      setError("");
+      setStatus(`Removing Artwork from ${galleryName}`);
+      const result = await invoke<DeleteResult>("delete_artwork_command", {
+        request: { artwork_id: artworkId, gallery_id: galleryId },
+      });
+      if (result.trash_failures.length > 0) {
+        setTrashFailureReport({
+          trashedFiles: result.trashed_files,
+          failures: result.trash_failures,
+        });
+        setStatus("Gallery removal blocked");
+        return;
+      }
+      const nextWorkspace = await loadWorkspace();
+      const nextSummary = nextWorkspace?.artworks.find((artwork) => artwork.id === artworkId);
+      if (!nextSummary) {
+        clearSelectedArtwork();
+        setStatus(`Artwork removed from ${galleryName}`);
+        return;
+      }
+
+      const selectedGalleryStillValid =
+        selectedGalleryId !== null && nextSummary.gallery_ids.includes(selectedGalleryId);
+      const nextGalleryId = selectedGalleryStillValid
+        ? selectedGalleryId
+        : (nextSummary.gallery_ids[0] ?? null);
+      if (nextGalleryId !== null) {
+        setSelectedGalleryId(nextGalleryId);
+        try {
+          await invoke("select_gallery_command", { galleryId: nextGalleryId });
+        } catch (caught) {
+          setError(errorMessage(caught));
+        }
+        expandTreeNodes([
+          "collection",
+          treeKeyForGallery(nextGalleryId),
+          treeKeyForArtwork(artworkId),
+        ]);
+      }
+      await loadArtwork(artworkId);
+      setStatus(`Artwork removed from ${galleryName}`);
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setStatus("Ready");
+    } finally {
+      setRemovingGalleryId(null);
+    }
   }
 
   function attachModeForDrop(payload: DragDropEventPayload): AttachMode {
@@ -3157,6 +3435,7 @@ function WorkbenchApp() {
       {renderUpdateDialog()}
       {renderPreferencesDialog()}
       {renderStartupDialog()}
+      {renderAddToGalleryDialog()}
       {workspaceCommand ? (
         <WorkspaceCommandDialog
           command={workspaceCommand}
@@ -3489,14 +3768,7 @@ function WorkbenchApp() {
                     )}
                     {renderFilteredProperty(
                       "Gallery",
-                      <PropertyRow label="Gallery">
-                        <input
-                          value={
-                            selectedSummary?.gallery_names.join(", ") ?? selectedGallery?.name ?? ""
-                          }
-                          readOnly
-                        />
-                      </PropertyRow>,
+                      renderGalleryMembershipProperty(),
                     )}
                     {renderFilteredProperty(
                       "Title",
@@ -6567,7 +6839,7 @@ function HelpPage({ page, onClose }: { page: "about" | "licensing"; onClose: () 
             <dl>
               <div>
                 <dt>Version</dt>
-                <dd>0.1.0 public beta</dd>
+                <dd>0.1.1 public beta</dd>
               </div>
               <div>
                 <dt>Publisher</dt>

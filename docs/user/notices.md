@@ -12,7 +12,7 @@ OA Curator includes or references:
 - Original Art Archive visual marks used only to describe OA Curator's OAA import/export compatibility.
 - Dracula and Alucard theme palettes from Dracula Theme.
 - Allotment for resizable application panes.
-- Lucide SVG icons for Collection, Gallery, Artwork, file, external-link, and thumbnail move commands.
+- Lucide SVG icons for Collection, Gallery, Artwork, file, external-link, gallery membership, and thumbnail move commands.
 
 ## License Expectations
 

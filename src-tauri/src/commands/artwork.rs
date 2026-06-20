@@ -68,6 +68,48 @@ pub async fn attach_file_assets_command(
 }
 
 #[tauri::command]
+pub async fn add_artwork_to_gallery_command(
+    state: tauri::State<'_, AppState>,
+    request: AddArtworkToGalleryRequest,
+) -> std::result::Result<WorkspaceState, String> {
+    let catalog = state.catalog.clone();
+    catalog_blocking("Add artwork to gallery", move || {
+        add_artwork_to_gallery_in_catalog(&catalog, request)
+    })
+    .await
+}
+
+fn add_artwork_to_gallery_in_catalog(
+    catalog: &Catalog,
+    request: AddArtworkToGalleryRequest,
+) -> std::result::Result<WorkspaceState, String> {
+    let galleries = catalog
+        .galleries_for_collection(request.collection_id)
+        .map_err(|error| error.to_string())?;
+    if !galleries
+        .iter()
+        .any(|gallery| gallery.id == request.gallery_id)
+    {
+        return Err("Target Gallery is not in the selected Collection".to_string());
+    }
+
+    let artwork = catalog
+        .artworks_for_collection(request.collection_id)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .find(|candidate| candidate.id == request.artwork_id)
+        .ok_or_else(|| "Artwork is not in the selected Collection".to_string())?;
+    if artwork.gallery_ids.contains(&request.gallery_id) {
+        return Err("Artwork is already in the selected Gallery".to_string());
+    }
+
+    catalog
+        .link_artwork_to_gallery(request.gallery_id, request.artwork_id)
+        .map_err(|error| error.to_string())?;
+    catalog.workspace_state().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn preview_delete_collection_command(
     state: tauri::State<'_, AppState>,
     collection_id: i64,
@@ -590,7 +632,12 @@ fn blank_to_none(value: Option<&str>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_artist_roles, ArtistCreditRequest};
+    use super::{
+        add_artwork_to_gallery_in_catalog, validate_artist_roles, AddArtworkToGalleryRequest,
+        ArtistCreditRequest,
+    };
+    use crate::catalog::Catalog;
+    use tempfile::tempdir;
 
     #[test]
     fn validate_artist_roles_rejects_values_outside_caf_role_list() {
@@ -625,5 +672,62 @@ mod tests {
         ]);
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn add_artwork_to_gallery_updates_workspace_membership() {
+        let temp = tempdir().expect("tempdir");
+        let catalog = Catalog::open(temp.path().join("catalog.sqlite3")).expect("catalog");
+        catalog.init().expect("init");
+        let collection = catalog
+            .create_collection("Collection", &temp.path().join(".oacollection"))
+            .expect("collection");
+        let first_gallery = catalog
+            .create_gallery("First", &temp.path().join("first.oagallery"))
+            .expect("first gallery");
+        catalog
+            .link_gallery_to_collection(collection.id, first_gallery.id)
+            .expect("link first gallery");
+        let second_gallery = catalog
+            .create_gallery("Second", &temp.path().join("second.oagallery"))
+            .expect("second gallery");
+        catalog
+            .link_gallery_to_collection(collection.id, second_gallery.id)
+            .expect("link second gallery");
+        let artwork = catalog
+            .create_artwork_in_gallery(first_gallery.id, "Shared Artwork", None)
+            .expect("artwork");
+
+        let state = add_artwork_to_gallery_in_catalog(
+            &catalog,
+            AddArtworkToGalleryRequest {
+                collection_id: collection.id,
+                artwork_id: artwork.id,
+                gallery_id: second_gallery.id,
+            },
+        )
+        .expect("workspace state");
+
+        let summary = state
+            .artworks
+            .iter()
+            .find(|candidate| candidate.id == artwork.id)
+            .expect("linked artwork summary");
+        assert_eq!(
+            summary.gallery_ids,
+            vec![first_gallery.id, second_gallery.id]
+        );
+        assert_eq!(
+            summary.gallery_names,
+            vec!["First".to_string(), "Second".to_string()]
+        );
+        assert!(
+            state
+                .artworks
+                .iter()
+                .filter(|candidate| candidate.id == artwork.id)
+                .count()
+                == 1
+        );
     }
 }

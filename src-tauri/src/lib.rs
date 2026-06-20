@@ -294,6 +294,7 @@ pub fn run() {
             commands::artwork::create_gallery_command,
             commands::artwork::create_artwork_command,
             commands::artwork::attach_file_assets_command,
+            commands::artwork::add_artwork_to_gallery_command,
             commands::artwork::preview_delete_collection_command,
             commands::artwork::preview_delete_gallery_command,
             commands::artwork::preview_delete_artwork_command,

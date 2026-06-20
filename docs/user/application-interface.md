@@ -64,6 +64,8 @@ PNG export controls appear only when the selected file can be rendered as JPG, P
 
 Properties are the editable fields for the selected Artwork, Collection, or Gallery. Artwork properties include gallery-site links, artist credits, public metadata, SNIKT.com fields, and private collector fields.
 
+For Artwork records, the **Galleries** section lists every Gallery that contains the selected Artwork. Use the Gallery add button to add the Artwork to another Gallery, or the Gallery remove button beside a Gallery to remove that assignment. The remove button is disabled when the Artwork only belongs to one Gallery.
+
 Gallery site filters let you focus the property list on CAF, SNIKT.com, Raremarq, or all compatible fields.
 
 Changes are written to local records and the selected Artwork manifest. Normal metadata edits do not rewrite Collection or Gallery manifests. Original image pixels are not modified by metadata edits.

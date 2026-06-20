@@ -185,6 +185,13 @@ pub struct MergeArtworkRequest {
     pub metadata: SaveMetadataRequest,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddArtworkToGalleryRequest {
+    pub collection_id: i64,
+    pub artwork_id: i64,
+    pub gallery_id: i64,
+}
+
 fn default_true() -> bool {
     true
 }

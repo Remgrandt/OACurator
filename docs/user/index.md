@@ -34,6 +34,7 @@ The current application supports the core cataloging flow:
 - Create, open, and close Collections.
 - Create Galleries and select them while browsing a Collection.
 - Create Artworks inside a Gallery.
+- Assign an Artwork to more than one Gallery.
 - Import ComicArtFans CSV metadata.
 - Import SNIKT.com CSV metadata.
 - Import and export OAA archives.

@@ -35,6 +35,19 @@ Locally created Artworks use neutral IDs such as `OAC-00001`. Gallery-site IDs a
 
 Artworks have portable `.oaartwork` manifest files. The Collection manifest stores the relative path to each Artwork manifest, which lets one Artwork belong to more than one Gallery without duplicating the Artwork folder.
 
+## Assigning Artwork To More Than One Gallery
+
+An Artwork can appear in more than one Gallery in the same Collection. Use this when one piece belongs in multiple useful groupings, such as a character Gallery and a published-pages Gallery, without creating duplicate Artwork records or duplicate image files.
+
+To assign an Artwork to another Gallery:
+
+1. Open the Artwork.
+2. In **Artwork Properties**, find the **Galleries** section.
+3. Click the Gallery add button.
+4. Choose the Gallery and confirm the action.
+
+The **Galleries** section lists every Gallery that currently contains the Artwork. Use the Gallery remove button beside a Gallery to remove that Gallery assignment. OA Curator keeps the Artwork in at least one Gallery, so the remove button is disabled when only one Gallery remains.
+
 ## Original Files
 
 Original files are your source scans or photos. OA Curator supports JPG, PNG, and TIFF.

@@ -150,6 +150,12 @@ export type MergeArtworkRequest = {
   metadata: MetadataSaveRequest;
 };
 
+export type AddArtworkToGalleryRequest = {
+  collection_id: number;
+  artwork_id: number;
+  gallery_id: number;
+};
+
 export type CafImportReport = {
   caf_collection_id: string;
   collection: CollectionSummary;
