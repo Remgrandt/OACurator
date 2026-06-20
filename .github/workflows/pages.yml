@@ -8,6 +8,7 @@ on:
       - main
     paths:
       - ".github/workflows/pages.yml"
+      - "docs/overrides/**"
       - "docs/user/**"
       - "mkdocs.yml"
       - "requirements-docs.txt"
