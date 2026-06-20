@@ -1,0 +1,391 @@
+# Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+name: macOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag. Leave blank to use beta-macos-${run_number}."
+        required: false
+        type: string
+      release_name:
+        description: "Release title. Leave blank to use OA Curator ${tag_name}."
+        required: false
+        type: string
+      draft:
+        description: "Create the GitHub Release as a draft when the release does not already exist."
+        required: true
+        type: boolean
+        default: true
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease when the release does not already exist."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
+jobs:
+  macos-release:
+    name: Build and publish macOS release
+    runs-on: macos-latest
+
+    env:
+      APPLE_SIGNING_IDENTITY: "Developer ID Application: Remgrandt Games LLC (3GHU5785J6)"
+      APPLE_TEAM_ID: "3GHU5785J6"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm official release repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REPOSITORY" != "Remgrandt/OACurator" ]; then
+            echo "::error::This workflow publishes official OA Curator releases only from Remgrandt/OACurator."
+            exit 1
+          fi
+
+      - name: Validate signing and notarization secrets
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_API_ISSUER \
+            APPLE_API_KEY \
+            APPLE_API_KEY_P8_BASE64 \
+            TAURI_SIGNING_PRIVATE_KEY \
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret for $name."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install documentation dependencies
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Check release source
+        run: npm run check:release
+
+      - name: Resolve release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag_name }}"
+          tag="${tag#"${tag%%[![:space:]]*}"}"
+          tag="${tag%"${tag##*[![:space:]]}"}"
+          if [ -z "$tag" ]; then
+            tag="beta-macos-${{ github.run_number }}"
+          fi
+
+          title="${{ inputs.release_name }}"
+          title="${title#"${title%%[![:space:]]*}"}"
+          title="${title%"${title##*[![:space:]]}"}"
+          if [ -z "$title" ]; then
+            title="OA Curator $tag"
+          fi
+
+          {
+            echo "tag_name=$tag"
+            echo "release_name=$title"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Import Apple Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/developer-id-application.p12"
+          keychain_path="$RUNNER_TEMP/oacurator-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+
+          CERTIFICATE_PATH="$certificate_path" python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          Path(os.environ["CERTIFICATE_PATH"]).write_bytes(
+              base64.b64decode(os.environ["APPLE_CERTIFICATE"])
+          )
+          PY
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+
+          echo "KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          private_key_dir="$RUNNER_TEMP/private_keys"
+          private_key_path="$private_key_dir/AuthKey_${APPLE_API_KEY}.p8"
+          mkdir -p "$private_key_dir"
+          APPLE_API_KEY_PATH="$private_key_path" python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          Path(os.environ["APPLE_API_KEY_PATH"]).write_bytes(
+              base64.b64decode(os.environ["APPLE_API_KEY_P8_BASE64"])
+          )
+          PY
+          chmod 600 "$private_key_path"
+          echo "APPLE_API_KEY_PATH=$private_key_path" >> "$GITHUB_ENV"
+
+      - name: Build signed and notarized universal macOS package
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run release:macos
+
+      - name: Verify macOS signatures and notarization
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/universal-apple-darwin/release/bundle"
+          dmg_file="$(find "$bundle_dir" -type f -name '*.dmg' | head -n 1)"
+          mount_dir="$RUNNER_TEMP/oacurator-dmg"
+
+          if [ -z "$dmg_file" ]; then
+            echo "::error::No .dmg file was produced."
+            exit 1
+          fi
+
+          codesign --verify --verbose=2 "$dmg_file"
+
+          mkdir -p "$mount_dir"
+          hdiutil attach "$dmg_file" -readonly -nobrowse -mountpoint "$mount_dir"
+          trap 'hdiutil detach "$mount_dir" -quiet || true' EXIT
+
+          app_bundle="$(find "$mount_dir" -type d -name '*.app' | head -n 1)"
+          if [ -z "$app_bundle" ]; then
+            echo "::error::No .app bundle was found inside the DMG."
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "$app_bundle"
+          spctl --assess --type execute --verbose=4 "$app_bundle"
+          xcrun stapler validate "$app_bundle"
+
+      - name: Collect macOS release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          bundle_dir="src-tauri/target/universal-apple-darwin/release/bundle"
+          find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) -print0 |
+            while IFS= read -r -d '' file; do
+              cp "$file" "release-assets/$(basename "$file" | tr ' ' '.')"
+            done
+
+          dmg_count="$(find release-assets -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')"
+          updater_count="$(find release-assets -maxdepth 1 -type f -name '*.app.tar.gz' | wc -l | tr -d ' ')"
+          signature_count="$(find release-assets -maxdepth 1 -type f -name '*.app.tar.gz.sig' | wc -l | tr -d ' ')"
+
+          if [ "$dmg_count" -eq 0 ]; then
+            echo "::error::No macOS DMG was collected."
+            exit 1
+          fi
+          if [ "$updater_count" -eq 0 ] || [ "$signature_count" -eq 0 ]; then
+            echo "::error::No macOS updater archive and signature were collected."
+            exit 1
+          fi
+
+      - name: Generate updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.release_meta.outputs.tag_name }}"
+          existing_latest_dir="$RUNNER_TEMP/oacurator-existing-latest"
+          existing_latest_path="$existing_latest_dir/latest.json"
+          mkdir -p "$existing_latest_dir"
+
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download "$release_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern latest.json \
+              --dir "$existing_latest_dir" \
+              --clobber || true
+          fi
+
+          RELEASE_TAG="$release_tag" EXISTING_LATEST_PATH="$existing_latest_path" python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+
+          release_assets = Path("release-assets")
+          updater_artifacts = sorted(release_assets.glob("*.app.tar.gz"))
+          if not updater_artifacts:
+              raise SystemExit("No macOS updater archive was collected.")
+
+          updater_artifact = updater_artifacts[0]
+          signature_path = Path(f"{updater_artifact}.sig")
+          if not signature_path.exists():
+              raise SystemExit(f"No updater signature found for {updater_artifact.name}.")
+
+          config = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+          existing_latest_path = Path(os.environ["EXISTING_LATEST_PATH"])
+          if existing_latest_path.exists():
+              latest = json.loads(existing_latest_path.read_text(encoding="utf-8"))
+          else:
+              latest = {}
+
+          default_notes = "\n".join(
+              [
+                  "OA Curator public beta build.",
+                  "",
+                  f"Source commit: {os.environ['GITHUB_SHA']}",
+                  "License: source-available freeware.",
+              ]
+          )
+          latest["version"] = config["version"]
+          if not str(latest.get("notes", "")).strip():
+              latest["notes"] = default_notes
+          if not str(latest.get("pub_date", "")).strip():
+              latest["pub_date"] = (
+                  dt.datetime.now(dt.timezone.utc)
+                  .replace(microsecond=0)
+                  .isoformat()
+                  .replace("+00:00", "Z")
+              )
+
+          platforms = latest.get("platforms")
+          if not isinstance(platforms, dict):
+              platforms = {}
+
+          asset_url = (
+              f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/"
+              f"releases/download/{os.environ['RELEASE_TAG']}/{updater_artifact.name}"
+          )
+          mac_update = {
+              "signature": signature_path.read_text(encoding="utf-8").strip(),
+              "url": asset_url,
+          }
+          platforms["darwin-x86_64"] = mac_update
+          platforms["darwin-aarch64"] = mac_update
+          latest["platforms"] = platforms
+
+          (release_assets / "latest.json").write_text(
+              json.dumps(latest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shasum -a 256 release-assets/* > release-assets/SHA256SUMS-macos.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oa-curator-macos-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_meta.outputs.tag_name }}"
+          title="${{ steps.release_meta.outputs.release_name }}"
+          notes="$(cat <<'NOTES'
+          OA Curator public beta build.
+
+          Source commit: $GITHUB_SHA
+          License: source-available freeware.
+          NOTES
+          )"
+          notes="${notes//\$GITHUB_SHA/$GITHUB_SHA}"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            release_args=(
+              release create "$tag"
+              release-assets/*
+              --repo "$GITHUB_REPOSITORY"
+              --target "$GITHUB_SHA"
+              --title "$title"
+              --notes "$notes"
+            )
+
+            if [ "${{ inputs.draft }}" = "true" ]; then
+              release_args+=(--draft)
+            fi
+            if [ "${{ inputs.prerelease }}" = "true" ]; then
+              release_args+=(--prerelease)
+            fi
+
+            gh "${release_args[@]}"
+          fi
+
+      - name: Delete temporary signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi

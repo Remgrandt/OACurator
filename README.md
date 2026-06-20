@@ -66,8 +66,9 @@ Move and rename workflows are expected to use preview, validation, no-overwrite 
 Prerequisites:
 
 - Node.js 22 or newer and npm.
-- Rust stable with the MSVC toolchain on Windows.
+- Rust stable.
 - Windows: Microsoft C++ Build Tools and WebView2 for Tauri.
+- macOS: Xcode Command Line Tools for Tauri.
 - Python 3.12 or newer for building the offline user guide.
 
 Install dependencies:
@@ -83,10 +84,14 @@ Run source checks used by the release package:
 npm run check:release
 ```
 
-Build the Windows desktop installer locally:
+Build a local desktop package:
 
 ```powershell
 npm run release:windows
+```
+
+```bash
+npm run release:macos
 ```
 
 Official signed releases require Remgrandt-controlled signing credentials and updater keys. Personal unmodified builds are allowed only within the limits of [LICENSE](LICENSE).

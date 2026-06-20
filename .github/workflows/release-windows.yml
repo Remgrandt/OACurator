@@ -14,12 +14,12 @@ on:
         required: false
         type: string
       draft:
-        description: "Create the GitHub Release as a draft."
+        description: "Create the GitHub Release as a draft when the release does not already exist."
         required: true
         type: boolean
         default: true
       prerelease:
-        description: "Mark the GitHub Release as a prerelease."
+        description: "Mark the GitHub Release as a prerelease when the release does not already exist."
         required: true
         type: boolean
         default: false
@@ -205,10 +205,24 @@ jobs:
           }
 
       - name: Generate updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $releaseTag = "${{ steps.release_meta.outputs.tag_name }}"
+          $existingLatestDir = Join-Path $env:RUNNER_TEMP "oacurator-existing-latest"
+          $existingLatestPath = Join-Path $existingLatestDir "latest.json"
+          New-Item -ItemType Directory -Force $existingLatestDir | Out-Null
+
+          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release download $releaseTag --repo $env:GITHUB_REPOSITORY --pattern latest.json --dir $existingLatestDir --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to download existing latest.json for $releaseTag."
+            }
+          }
+
           $releaseNotes = @"
           OA Curator public beta build.
 
@@ -230,18 +244,29 @@ jobs:
 
           $config = Get-Content src-tauri\tauri.conf.json -Raw | ConvertFrom-Json
           $assetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$releaseTag/$($updaterArtifact.Name)"
-          $latest = [ordered]@{
-            version = $config.version
-            notes = $releaseNotes.Trim()
-            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-            platforms = [ordered]@{
-              "windows-x86_64" = [ordered]@{
-                signature = (Get-Content -Raw -LiteralPath $signaturePath).Trim()
-                url = $assetUrl
-              }
-            }
+
+          if (Test-Path -LiteralPath $existingLatestPath) {
+            $latest = Get-Content -Raw -LiteralPath $existingLatestPath | ConvertFrom-Json -AsHashtable
+          } else {
+            $latest = [ordered]@{}
           }
 
+          $latest["version"] = $config.version
+          if (-not $latest.ContainsKey("notes") -or [string]::IsNullOrWhiteSpace([string]$latest["notes"])) {
+            $latest["notes"] = $releaseNotes.Trim()
+          }
+          if (-not $latest.ContainsKey("pub_date") -or [string]::IsNullOrWhiteSpace([string]$latest["pub_date"])) {
+            $latest["pub_date"] = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          }
+
+          if (-not $latest.ContainsKey("platforms") -or $null -eq $latest["platforms"] -or $latest["platforms"] -isnot [System.Collections.IDictionary]) {
+            $latest["platforms"] = [ordered]@{}
+          }
+
+          $latest["platforms"]["windows-x86_64"] = [ordered]@{
+            signature = (Get-Content -Raw -LiteralPath $signaturePath).Trim()
+            url = $assetUrl
+          }
           $latest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 release-assets\latest.json
 
       - name: Generate checksums
@@ -260,7 +285,7 @@ jobs:
           path: release-assets/*
           if-no-files-found: error
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
@@ -281,20 +306,28 @@ jobs:
             throw "No release assets found."
           }
 
-          $releaseArgs = @("release", "create", $tag)
-          $releaseArgs += $assets
-          $releaseArgs += @(
-            "--repo", $env:GITHUB_REPOSITORY,
-            "--target", $env:GITHUB_SHA,
-            "--title", $title,
-            "--notes", $notes
-          )
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $releaseArgs = @("release", "upload", $tag)
+            $releaseArgs += $assets
+            $releaseArgs += @("--repo", $env:GITHUB_REPOSITORY, "--clobber")
+            gh @releaseArgs
+          } else {
+            $releaseArgs = @("release", "create", $tag)
+            $releaseArgs += $assets
+            $releaseArgs += @(
+              "--repo", $env:GITHUB_REPOSITORY,
+              "--target", $env:GITHUB_SHA,
+              "--title", $title,
+              "--notes", $notes
+            )
 
-          if ("${{ inputs.draft }}" -eq "true") {
-            $releaseArgs += "--draft"
-          }
-          if ("${{ inputs.prerelease }}" -eq "true") {
-            $releaseArgs += "--prerelease"
-          }
+            if ("${{ inputs.draft }}" -eq "true") {
+              $releaseArgs += "--draft"
+            }
+            if ("${{ inputs.prerelease }}" -eq "true") {
+              $releaseArgs += "--prerelease"
+            }
 
-          gh @releaseArgs
+            gh @releaseArgs
+          }

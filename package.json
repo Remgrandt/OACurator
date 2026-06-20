@@ -24,7 +24,8 @@
     "check:backend": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "check:release": "npm run check:frontend && npm run check:backend && git diff --check",
     "tauri": "tauri",
-    "release:windows": "npm run tauri -- build --bundles nsis"
+    "release:windows": "npm run tauri -- build --bundles nsis",
+    "release:macos": "npm run tauri -- build --bundles app,dmg --target universal-apple-darwin"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
