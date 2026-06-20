@@ -213,7 +213,7 @@ jobs:
           OA Curator public beta build.
 
           Source commit: $env:GITHUB_SHA
-          License: source-available freeware, not open source.
+          License: source-available freeware.
           "@
 
           $updaterArtifact = Get-ChildItem release-assets -File |
@@ -273,7 +273,7 @@ jobs:
           OA Curator public beta build.
 
           Source commit: $env:GITHUB_SHA
-          License: source-available freeware, not open source.
+          License: source-available freeware.
           "@
 
           $assets = Get-ChildItem release-assets -File | ForEach-Object { $_.FullName }
