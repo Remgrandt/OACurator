@@ -1,0 +1,173 @@
+# Copyright (c) 2026 Remgrandt Works. All rights reserved.
+
+name: Publish Staged Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Draft release tag to publish, such as v0.1.2."
+        required: true
+        type: string
+      require_windows:
+        description: "Require Windows installer assets and updater metadata."
+        required: true
+        type: boolean
+        default: true
+      require_macos:
+        description: "Require macOS DMG/updater assets and updater metadata."
+        required: true
+        type: boolean
+        default: true
+      mark_latest:
+        description: "Mark the release as the latest GitHub Release when publishing."
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-staged-release-${{ github.event.inputs.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish existing draft release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Confirm official release repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REPOSITORY" != "Remgrandt/OACurator" ]; then
+            echo "::error::This workflow publishes official OA Curator releases only from Remgrandt/OACurator."
+            exit 1
+          fi
+
+      - name: Resolve release tag
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag_name }}"
+          tag="${tag#"${tag%%[![:space:]]*}"}"
+          tag="${tag%"${tag##*[![:space:]]}"}"
+          if [ -z "$tag" ]; then
+            echo "::error::A staged release tag is required."
+            exit 1
+          fi
+          echo "tag_name=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Validate staged draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_WINDOWS: ${{ inputs.require_windows }}
+          REQUIRE_MACOS: ${{ inputs.require_macos }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_meta.outputs.tag_name }}"
+          latest_dir="$RUNNER_TEMP/oacurator-staged-latest"
+          latest_path="$latest_dir/latest.json"
+          mkdir -p "$latest_dir"
+
+          release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,assets,url)"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern latest.json --dir "$latest_dir" --clobber
+
+          RELEASE_JSON="$release_json" LATEST_JSON_PATH="$latest_path" RELEASE_TAG="$tag" python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          release_tag = os.environ["RELEASE_TAG"]
+          release = json.loads(os.environ["RELEASE_JSON"])
+          assets = sorted(asset["name"] for asset in release.get("assets", []))
+
+          if not release.get("isDraft"):
+              raise SystemExit(f"Release {release_tag} is not a draft.")
+
+          if not assets:
+              raise SystemExit(f"Release {release_tag} has no assets.")
+
+          latest_path = Path(os.environ["LATEST_JSON_PATH"])
+          if not latest_path.exists():
+              raise SystemExit(f"Release {release_tag} is missing latest.json.")
+
+          latest = json.loads(latest_path.read_text(encoding="utf-8"))
+          platforms = latest.get("platforms")
+          if not isinstance(platforms, dict):
+              raise SystemExit("latest.json does not contain a platforms object.")
+
+          require_windows = os.environ["REQUIRE_WINDOWS"] == "true"
+          require_macos = os.environ["REQUIRE_MACOS"] == "true"
+
+          required_platforms = []
+          if require_windows:
+              required_platforms.append("windows-x86_64")
+              if not any(name.endswith(".exe") for name in assets):
+                  raise SystemExit("Required Windows installer asset is missing.")
+              if not any(name.endswith(".exe.sig") for name in assets):
+                  raise SystemExit("Required Windows updater signature asset is missing.")
+              if "SHA256SUMS.txt" not in assets:
+                  raise SystemExit("Required Windows checksum asset is missing.")
+
+          if require_macos:
+              required_platforms.extend(["darwin-aarch64", "darwin-x86_64"])
+              if not any(name.endswith(".dmg") for name in assets):
+                  raise SystemExit("Required macOS DMG asset is missing.")
+              if not any(name.endswith(".app.tar.gz") for name in assets):
+                  raise SystemExit("Required macOS updater archive asset is missing.")
+              if not any(name.endswith(".app.tar.gz.sig") for name in assets):
+                  raise SystemExit("Required macOS updater signature asset is missing.")
+              if "SHA256SUMS-macos.txt" not in assets:
+                  raise SystemExit("Required macOS checksum asset is missing.")
+
+          for platform in required_platforms:
+              update = platforms.get(platform)
+              if not isinstance(update, dict):
+                  raise SystemExit(f"latest.json is missing updater platform {platform}.")
+              if not str(update.get("signature", "")).strip():
+                  raise SystemExit(f"latest.json platform {platform} has no signature.")
+              url = str(update.get("url", ""))
+              expected_fragment = f"/releases/download/{release_tag}/"
+              if expected_fragment not in url:
+                  raise SystemExit(
+                      f"latest.json platform {platform} URL does not point at {release_tag}."
+                  )
+
+          print(f"Validated staged draft release {release_tag}.")
+          PY
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_meta.outputs.tag_name }}"
+          if [ "${{ inputs.mark_latest }}" = "true" ]; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+          fi
+
+      - name: Confirm release is published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.release_meta.outputs.tag_name }}"
+          release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,url)"
+          RELEASE_JSON="$release_json" python - <<'PY'
+          import json
+          import os
+
+          release = json.loads(os.environ["RELEASE_JSON"])
+          if release.get("isDraft"):
+              raise SystemExit(f"Release {release['tagName']} is still a draft.")
+          print(f"Published {release['tagName']}: {release['url']}")
+          PY

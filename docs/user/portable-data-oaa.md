@@ -45,6 +45,6 @@ Keep OAA archives somewhere you trust, and only send them to people or services 
 
 This guide only explains what users need to know to use OAA in OA Curator.
 
-For the full technical format, see [Original-Art-Archive/oaa-spec](https://github.com/Original-Art-Archive/oaa-spec).
+For the full technical format, see [Original Art Archive OAA Specification](https://original-art-archive.github.io/oaa-spec/).
 
 <p class="oaa-mark-note">The OAA logo is used here only to describe OA Curator's compatibility with the Original Art Archive Format. It does not imply separate certification, endorsement, or maintenance by the OAA project.</p>
