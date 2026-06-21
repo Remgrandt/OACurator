@@ -29,9 +29,9 @@
     "check:release": "npm run check:frontend && npm run check:backend && npm run check:workflows && git diff --check",
     "tauri": "tauri",
     "release:windows": "npm run tauri -- build --bundles nsis",
-    "release:macos": "npm run tauri -- build --bundles dmg --target universal-apple-darwin",
-    "release:macos:arm64": "npm run tauri -- build --bundles dmg --target aarch64-apple-darwin",
-    "release:macos:x64": "npm run tauri -- build --bundles dmg --target x86_64-apple-darwin"
+    "release:macos": "npm run tauri -- build --bundles app,dmg --target universal-apple-darwin",
+    "release:macos:arm64": "npm run tauri -- build --bundles app,dmg --target aarch64-apple-darwin",
+    "release:macos:x64": "npm run tauri -- build --bundles app,dmg --target x86_64-apple-darwin"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

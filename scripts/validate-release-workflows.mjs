@@ -22,6 +22,7 @@ function assertIncludes(text, needle, description) {
 const windowsRelease = readWorkflow('release-windows.yml');
 const macosRelease = readWorkflow('release-macos.yml');
 const publishStagedRelease = readWorkflow('publish-staged-release.yml');
+const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
 for (const [name, workflow] of [
   ['Windows Release', windowsRelease],
@@ -31,6 +32,14 @@ for (const [name, workflow] of [
   assertIncludes(workflow, 'draft:', `${name} workflow`);
   assertIncludes(workflow, 'default: true', `${name} workflow draft input`);
   assertIncludes(workflow, 'gh release', `${name} workflow`);
+}
+
+for (const scriptName of ['release:macos', 'release:macos:arm64', 'release:macos:x64']) {
+  assertIncludes(
+    packageJson.scripts[scriptName],
+    '--bundles app,dmg',
+    `${scriptName} package script`,
+  );
 }
 
 assertIncludes(
