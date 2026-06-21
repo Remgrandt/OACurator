@@ -9,6 +9,9 @@ const host = remoteHost || "127.0.0.1";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
+  build: {
+    target: ["safari13", "es2020"],
+  },
   server: {
     port: 1420,
     strictPort: true,

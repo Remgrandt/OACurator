@@ -16,8 +16,9 @@
     "dev:tauri": "npm run build:frontend && vite preview --host 127.0.0.1 --port 1420 --strictPort",
     "dev:tauri:live": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "npm run docs:build && npm run build:frontend",
-    "build:frontend": "npm run typecheck && vite build",
+    "build:frontend": "npm run typecheck && vite build && npm run bundle:check",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "bundle:check": "node scripts/check-release-bundle.mjs",
     "docs:build": "node scripts/run-mkdocs.mjs build --strict",
     "docs:serve": "node scripts/run-mkdocs.mjs serve",
     "check:frontend": "npm run typecheck && npm run docs:build && npm run build:frontend",
@@ -34,16 +35,19 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "allotment": "^1.20.5",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/node": "^25.9.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^8.0.16"
+    "vite": "7.3.5"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
   }
 }
