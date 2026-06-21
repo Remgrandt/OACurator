@@ -73,6 +73,11 @@ assertIncludes(
   'Publish Staged Release updater manifest validation',
 );
 
+assert(
+  !windowsRelease.includes('.ContainsKey('),
+  'Windows Release workflow must use OrderedDictionary-compatible .Contains(...) checks.',
+);
+
 for (const forbidden of [
   'gh release create',
   'gh release upload',

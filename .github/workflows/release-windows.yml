@@ -255,14 +255,14 @@ jobs:
           }
 
           $latest["version"] = $config.version
-          if (-not $latest.ContainsKey("notes") -or [string]::IsNullOrWhiteSpace([string]$latest["notes"])) {
+          if (-not $latest.Contains("notes") -or [string]::IsNullOrWhiteSpace([string]$latest["notes"])) {
             $latest["notes"] = $releaseNotes.Trim()
           }
-          if (-not $latest.ContainsKey("pub_date") -or [string]::IsNullOrWhiteSpace([string]$latest["pub_date"])) {
+          if (-not $latest.Contains("pub_date") -or [string]::IsNullOrWhiteSpace([string]$latest["pub_date"])) {
             $latest["pub_date"] = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
           }
 
-          if (-not $latest.ContainsKey("platforms") -or $null -eq $latest["platforms"] -or $latest["platforms"] -isnot [System.Collections.IDictionary]) {
+          if (-not $latest.Contains("platforms") -or $null -eq $latest["platforms"] -or $latest["platforms"] -isnot [System.Collections.IDictionary]) {
             $latest["platforms"] = [ordered]@{}
           }
 
