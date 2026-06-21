@@ -74,6 +74,9 @@ jobs:
       - name: Install documentation dependencies
         run: python -m pip install -r requirements-docs.txt
 
+      - name: Bundle libvips runtime
+        run: npm run setup:libvips:windows
+
       - name: Check release source
         run: npm run check:release
 

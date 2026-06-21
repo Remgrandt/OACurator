@@ -105,6 +105,47 @@ CREATE TABLE IF NOT EXISTS derived_asset (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS derived_asset_render (
+  derived_asset_id INTEGER PRIMARY KEY REFERENCES derived_asset(id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL,
+  recipe_key TEXT NOT NULL,
+  recipe_json TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  source_size_bytes INTEGER NOT NULL,
+  source_modified_at TEXT,
+  source_width INTEGER NOT NULL,
+  source_height INTEGER NOT NULL,
+  output_width INTEGER NOT NULL,
+  output_height INTEGER NOT NULL,
+  output_size_bytes INTEGER NOT NULL,
+  renderer TEXT NOT NULL,
+  renderer_version TEXT NOT NULL,
+  renderer_options_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS file_asset_image_probe (
+  file_asset_id INTEGER PRIMARY KEY REFERENCES file_asset(id) ON DELETE CASCADE,
+  probe_status TEXT NOT NULL,
+  render_status TEXT NOT NULL,
+  width INTEGER,
+  height INTEGER,
+  dpi_x REAL,
+  dpi_y REAL,
+  container_format TEXT,
+  detected_mime TEXT,
+  compression TEXT,
+  photometric TEXT,
+  bits_per_sample INTEGER,
+  samples_per_pixel INTEGER,
+  has_alpha INTEGER,
+  preferred_renderer TEXT,
+  renderer_version TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  probed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS artist (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE
@@ -225,6 +266,8 @@ CREATE INDEX IF NOT EXISTS idx_gallery_name ON gallery(name);
 CREATE INDEX IF NOT EXISTS idx_gallery_artwork_artwork ON gallery_artwork(artwork_id);
 CREATE INDEX IF NOT EXISTS idx_file_asset_artwork ON file_asset(artwork_id);
 CREATE INDEX IF NOT EXISTS idx_derived_asset_artwork ON derived_asset(artwork_id);
+CREATE INDEX IF NOT EXISTS idx_derived_asset_render_recipe ON derived_asset_render(recipe_key);
+CREATE INDEX IF NOT EXISTS idx_derived_asset_render_source ON derived_asset_render(source_path, source_size_bytes, source_modified_at);
 CREATE INDEX IF NOT EXISTS idx_file_asset_external_link_asset ON file_asset_external_link(file_asset_id);
 CREATE INDEX IF NOT EXISTS idx_oaa_extension_block_owner ON oaa_extension_block(owner_kind, owner_id);
 CREATE INDEX IF NOT EXISTS idx_manifest_projection_state_updated_at ON manifest_projection_state(updated_at);

@@ -396,6 +396,47 @@ impl Catalog {
               created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS derived_asset_render (
+              derived_asset_id INTEGER PRIMARY KEY REFERENCES derived_asset(id) ON DELETE CASCADE,
+              purpose TEXT NOT NULL,
+              recipe_key TEXT NOT NULL,
+              recipe_json TEXT NOT NULL,
+              source_path TEXT NOT NULL,
+              source_size_bytes INTEGER NOT NULL,
+              source_modified_at TEXT,
+              source_width INTEGER NOT NULL,
+              source_height INTEGER NOT NULL,
+              output_width INTEGER NOT NULL,
+              output_height INTEGER NOT NULL,
+              output_size_bytes INTEGER NOT NULL,
+              renderer TEXT NOT NULL,
+              renderer_version TEXT NOT NULL,
+              renderer_options_json TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS file_asset_image_probe (
+              file_asset_id INTEGER PRIMARY KEY REFERENCES file_asset(id) ON DELETE CASCADE,
+              probe_status TEXT NOT NULL,
+              render_status TEXT NOT NULL,
+              width INTEGER,
+              height INTEGER,
+              dpi_x REAL,
+              dpi_y REAL,
+              container_format TEXT,
+              detected_mime TEXT,
+              compression TEXT,
+              photometric TEXT,
+              bits_per_sample INTEGER,
+              samples_per_pixel INTEGER,
+              has_alpha INTEGER,
+              preferred_renderer TEXT,
+              renderer_version TEXT,
+              error_code TEXT,
+              error_message TEXT,
+              probed_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS artist (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL UNIQUE
@@ -516,6 +557,8 @@ impl Catalog {
             CREATE INDEX IF NOT EXISTS idx_gallery_artwork_artwork ON gallery_artwork(artwork_id);
             CREATE INDEX IF NOT EXISTS idx_file_asset_artwork ON file_asset(artwork_id);
             CREATE INDEX IF NOT EXISTS idx_derived_asset_artwork ON derived_asset(artwork_id);
+            CREATE INDEX IF NOT EXISTS idx_derived_asset_render_recipe ON derived_asset_render(recipe_key);
+            CREATE INDEX IF NOT EXISTS idx_derived_asset_render_source ON derived_asset_render(source_path, source_size_bytes, source_modified_at);
             CREATE INDEX IF NOT EXISTS idx_file_asset_external_link_asset ON file_asset_external_link(file_asset_id);
             CREATE INDEX IF NOT EXISTS idx_oaa_extension_block_owner ON oaa_extension_block(owner_kind, owner_id);
             CREATE INDEX IF NOT EXISTS idx_manifest_projection_state_updated_at ON manifest_projection_state(updated_at);
@@ -4707,6 +4750,146 @@ impl Catalog {
             self.ensure_artwork_manifest(artwork_id)?;
         }
         Ok(asset)
+    }
+
+    pub fn add_derived_asset_render(&self, insert: DerivedAssetRenderInsert) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let source_path = insert.source_path.to_string_lossy().to_string();
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO derived_asset_render
+             (derived_asset_id, purpose, recipe_key, recipe_json, source_path, source_size_bytes,
+              source_modified_at, source_width, source_height, output_width, output_height,
+              output_size_bytes, renderer, renderer_version, renderer_options_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(derived_asset_id) DO UPDATE SET
+               purpose = excluded.purpose,
+               recipe_key = excluded.recipe_key,
+               recipe_json = excluded.recipe_json,
+               source_path = excluded.source_path,
+               source_size_bytes = excluded.source_size_bytes,
+               source_modified_at = excluded.source_modified_at,
+               source_width = excluded.source_width,
+               source_height = excluded.source_height,
+               output_width = excluded.output_width,
+               output_height = excluded.output_height,
+               output_size_bytes = excluded.output_size_bytes,
+               renderer = excluded.renderer,
+               renderer_version = excluded.renderer_version,
+               renderer_options_json = excluded.renderer_options_json,
+               created_at = excluded.created_at",
+            params![
+                insert.derived_asset_id,
+                insert.purpose,
+                insert.recipe_key,
+                insert.recipe_json,
+                source_path,
+                insert.source_size_bytes as i64,
+                insert.source_modified_at,
+                insert.source_width,
+                insert.source_height,
+                insert.output_width,
+                insert.output_height,
+                insert.output_size_bytes as i64,
+                insert.renderer,
+                insert.renderer_version,
+                insert.renderer_options_json,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn derived_asset_render(
+        &self,
+        derived_asset_id: i64,
+    ) -> Result<Option<DerivedAssetRender>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT derived_asset_id, purpose, recipe_key, recipe_json, source_path,
+                    source_size_bytes, source_modified_at, source_width, source_height,
+                    output_width, output_height, output_size_bytes, renderer,
+                    renderer_version, renderer_options_json, created_at
+             FROM derived_asset_render
+             WHERE derived_asset_id = ?1",
+            params![derived_asset_id],
+            |row| {
+                Ok(DerivedAssetRender {
+                    derived_asset_id: row.get(0)?,
+                    purpose: row.get(1)?,
+                    recipe_key: row.get(2)?,
+                    recipe_json: row.get(3)?,
+                    source_path: PathBuf::from(row.get::<_, String>(4)?),
+                    source_size_bytes: row.get(5)?,
+                    source_modified_at: row.get(6)?,
+                    source_width: row.get(7)?,
+                    source_height: row.get(8)?,
+                    output_width: row.get(9)?,
+                    output_height: row.get(10)?,
+                    output_size_bytes: row.get(11)?,
+                    renderer: row.get(12)?,
+                    renderer_version: row.get(13)?,
+                    renderer_options_json: row.get(14)?,
+                    created_at: row.get(15)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(AppError::from)
+    }
+
+    pub fn upsert_file_asset_image_probe(&self, insert: FileAssetImageProbeInsert) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO file_asset_image_probe
+             (file_asset_id, probe_status, render_status, width, height, dpi_x, dpi_y,
+              container_format, detected_mime, compression, photometric, bits_per_sample,
+              samples_per_pixel, has_alpha, preferred_renderer, renderer_version,
+              error_code, error_message, probed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+             ON CONFLICT(file_asset_id) DO UPDATE SET
+               probe_status = excluded.probe_status,
+               render_status = excluded.render_status,
+               width = excluded.width,
+               height = excluded.height,
+               dpi_x = excluded.dpi_x,
+               dpi_y = excluded.dpi_y,
+               container_format = excluded.container_format,
+               detected_mime = excluded.detected_mime,
+               compression = excluded.compression,
+               photometric = excluded.photometric,
+               bits_per_sample = excluded.bits_per_sample,
+               samples_per_pixel = excluded.samples_per_pixel,
+               has_alpha = excluded.has_alpha,
+               preferred_renderer = excluded.preferred_renderer,
+               renderer_version = excluded.renderer_version,
+               error_code = excluded.error_code,
+               error_message = excluded.error_message,
+               probed_at = excluded.probed_at",
+            params![
+                insert.file_asset_id,
+                insert.probe_status,
+                insert.render_status,
+                insert.width,
+                insert.height,
+                insert.dpi_x,
+                insert.dpi_y,
+                insert.container_format,
+                insert.detected_mime,
+                insert.compression,
+                insert.photometric,
+                insert.bits_per_sample,
+                insert.samples_per_pixel,
+                insert.has_alpha.map(|value| if value { 1 } else { 0 }),
+                insert.preferred_renderer,
+                insert.renderer_version,
+                insert.error_code,
+                insert.error_message,
+                now
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn update_image_role(

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Remgrandt Works. All rights reserved.
 
-use crate::Result;
+use crate::{AppError, Result};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
@@ -16,17 +16,6 @@ pub struct ImageMetadata {
 }
 
 pub fn read_image_metadata(path: &Path) -> Result<ImageMetadata> {
-    let (width, height) = image::image_dimensions(path)?;
-    let (dpi_x, dpi_y) = read_dpi(path).unwrap_or((None, None));
-    Ok(ImageMetadata {
-        width: width as i64,
-        height: height as i64,
-        dpi_x,
-        dpi_y,
-    })
-}
-
-fn read_dpi(path: &Path) -> Option<(Option<f64>, Option<f64>)> {
     match path
         .extension()
         .and_then(|value| value.to_str())
@@ -34,10 +23,13 @@ fn read_dpi(path: &Path) -> Option<(Option<f64>, Option<f64>)> {
         .to_ascii_lowercase()
         .as_str()
     {
-        "tif" | "tiff" => read_tiff_dpi(path),
-        "jpg" | "jpeg" => read_jpeg_dpi(path),
-        "png" => read_png_dpi(path),
-        _ => None,
+        "jpg" | "jpeg" => read_jpeg_metadata(path),
+        "png" => read_png_metadata(path),
+        "tif" | "tiff" => read_tiff_metadata(path),
+        _ => Err(AppError::Message(format!(
+            "Unsupported image type: {}",
+            path.display()
+        ))),
     }
 }
 
@@ -64,6 +56,22 @@ fn read_tiff_dpi(path: &Path) -> Option<(Option<f64>, Option<f64>)> {
         .and_then(tiff_value_to_f64)
         .map(|value| value * scale);
     Some((x, y))
+}
+
+fn read_tiff_metadata(path: &Path) -> Result<ImageMetadata> {
+    let file = File::open(path)?;
+    let mut decoder = TiffDecoder::new(BufReader::new(file))
+        .map_err(|error| AppError::Message(format!("Could not read TIFF metadata: {error}")))?;
+    let (width, height) = decoder
+        .dimensions()
+        .map_err(|error| AppError::Message(format!("Could not read TIFF dimensions: {error}")))?;
+    let (dpi_x, dpi_y) = read_tiff_dpi(path).unwrap_or((None, None));
+    Ok(ImageMetadata {
+        width: i64::from(width),
+        height: i64::from(height),
+        dpi_x,
+        dpi_y,
+    })
 }
 
 fn tiff_value_to_f64(value: TiffValue) -> Option<f64> {
@@ -126,41 +134,126 @@ fn read_png_dpi(path: &Path) -> Option<(Option<f64>, Option<f64>)> {
     }
 }
 
-fn read_jpeg_dpi(path: &Path) -> Option<(Option<f64>, Option<f64>)> {
-    let mut file = File::open(path).ok()?;
-    let mut start = [0; 2];
-    file.read_exact(&mut start).ok()?;
-    if start != [0xff, 0xd8] {
-        return None;
+fn read_png_metadata(path: &Path) -> Result<ImageMetadata> {
+    let mut file = File::open(path)?;
+    let mut signature = [0; 8];
+    file.read_exact(&mut signature)?;
+    if signature != *b"\x89PNG\r\n\x1a\n" {
+        return Err(AppError::Message(format!(
+            "Could not read PNG metadata: invalid signature in {}",
+            path.display()
+        )));
     }
 
+    let mut length_bytes = [0; 4];
+    file.read_exact(&mut length_bytes)?;
+    let length = u32::from_be_bytes(length_bytes);
+    let mut chunk_type = [0; 4];
+    file.read_exact(&mut chunk_type)?;
+    if &chunk_type != b"IHDR" || length < 8 {
+        return Err(AppError::Message(format!(
+            "Could not read PNG metadata: missing IHDR in {}",
+            path.display()
+        )));
+    }
+    let mut dimensions = [0; 8];
+    file.read_exact(&mut dimensions)?;
+    let width = u32::from_be_bytes(dimensions[0..4].try_into().expect("width bytes"));
+    let height = u32::from_be_bytes(dimensions[4..8].try_into().expect("height bytes"));
+    let (dpi_x, dpi_y) = read_png_dpi(path).unwrap_or((None, None));
+    Ok(ImageMetadata {
+        width: i64::from(width),
+        height: i64::from(height),
+        dpi_x,
+        dpi_y,
+    })
+}
+
+fn read_jpeg_metadata(path: &Path) -> Result<ImageMetadata> {
+    let mut file = File::open(path)?;
+    let mut start = [0; 2];
+    file.read_exact(&mut start)?;
+    if start != [0xff, 0xd8] {
+        return Err(AppError::Message(format!(
+            "Could not read JPEG metadata: invalid signature in {}",
+            path.display()
+        )));
+    }
+
+    let mut dpi = (None, None);
     loop {
-        let marker = read_jpeg_marker(&mut file)?;
+        let marker = read_jpeg_marker(&mut file).ok_or_else(|| {
+            AppError::Message(format!(
+                "Could not read JPEG metadata: missing marker in {}",
+                path.display()
+            ))
+        })?;
         if marker == 0xda || marker == 0xd9 {
-            return None;
+            return Err(AppError::Message(format!(
+                "Could not read JPEG metadata: dimensions not found in {}",
+                path.display()
+            )));
         }
-        let length = read_be_u16(&mut file)? as usize;
+        let length = read_be_u16(&mut file).ok_or_else(|| {
+            AppError::Message(format!(
+                "Could not read JPEG metadata: invalid segment length in {}",
+                path.display()
+            ))
+        })? as usize;
         if length < 2 {
-            return None;
+            return Err(AppError::Message(format!(
+                "Could not read JPEG metadata: invalid segment length in {}",
+                path.display()
+            )));
         }
         let data_length = length - 2;
         if marker == 0xe0 {
             let mut data = vec![0; data_length];
-            file.read_exact(&mut data).ok()?;
+            file.read_exact(&mut data)?;
             if data.len() >= 14 && &data[0..5] == b"JFIF\0" {
                 let unit = data[7];
                 let x = u16::from_be_bytes([data[8], data[9]]);
                 let y = u16::from_be_bytes([data[10], data[11]]);
-                return match unit {
-                    1 => Some((Some(f64::from(x)), Some(f64::from(y)))),
-                    2 => Some((Some(f64::from(x) * 2.54), Some(f64::from(y) * 2.54))),
-                    _ => None,
+                dpi = match unit {
+                    1 => (Some(f64::from(x)), Some(f64::from(y))),
+                    2 => (Some(f64::from(x) * 2.54), Some(f64::from(y) * 2.54)),
+                    _ => (None, None),
                 };
             }
-        } else {
-            skip_exact(&mut file, data_length)?;
+            continue;
         }
+        if is_jpeg_start_of_frame(marker) {
+            let mut data = vec![0; data_length];
+            file.read_exact(&mut data)?;
+            if data.len() < 6 {
+                return Err(AppError::Message(format!(
+                    "Could not read JPEG metadata: short frame in {}",
+                    path.display()
+                )));
+            }
+            let height = u16::from_be_bytes([data[1], data[2]]);
+            let width = u16::from_be_bytes([data[3], data[4]]);
+            return Ok(ImageMetadata {
+                width: i64::from(width),
+                height: i64::from(height),
+                dpi_x: dpi.0,
+                dpi_y: dpi.1,
+            });
+        }
+        skip_exact(&mut file, data_length).ok_or_else(|| {
+            AppError::Message(format!(
+                "Could not read JPEG metadata: truncated segment in {}",
+                path.display()
+            ))
+        })?;
     }
+}
+
+fn is_jpeg_start_of_frame(marker: u8) -> bool {
+    matches!(
+        marker,
+        0xc0 | 0xc1 | 0xc2 | 0xc3 | 0xc5 | 0xc6 | 0xc7 | 0xc9 | 0xca | 0xcb | 0xcd | 0xce | 0xcf
+    )
 }
 
 fn read_jpeg_marker(file: &mut File) -> Option<u8> {

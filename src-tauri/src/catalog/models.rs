@@ -269,6 +269,67 @@ pub struct DerivedAssetInsert<'a> {
     pub image_role: Option<&'a str>,
 }
 
+#[derive(Debug, Clone)]
+pub struct DerivedAssetRenderInsert {
+    pub derived_asset_id: i64,
+    pub purpose: String,
+    pub recipe_key: String,
+    pub recipe_json: String,
+    pub source_path: PathBuf,
+    pub source_size_bytes: u64,
+    pub source_modified_at: Option<String>,
+    pub source_width: i64,
+    pub source_height: i64,
+    pub output_width: i64,
+    pub output_height: i64,
+    pub output_size_bytes: u64,
+    pub renderer: String,
+    pub renderer_version: String,
+    pub renderer_options_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DerivedAssetRender {
+    pub derived_asset_id: i64,
+    pub purpose: String,
+    pub recipe_key: String,
+    pub recipe_json: String,
+    pub source_path: PathBuf,
+    pub source_size_bytes: i64,
+    pub source_modified_at: Option<String>,
+    pub source_width: i64,
+    pub source_height: i64,
+    pub output_width: i64,
+    pub output_height: i64,
+    pub output_size_bytes: i64,
+    pub renderer: String,
+    pub renderer_version: String,
+    pub renderer_options_json: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileAssetImageProbeInsert {
+    pub file_asset_id: i64,
+    pub probe_status: String,
+    pub render_status: String,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub dpi_x: Option<f64>,
+    pub dpi_y: Option<f64>,
+    pub container_format: Option<String>,
+    pub detected_mime: Option<String>,
+    pub compression: Option<String>,
+    pub photometric: Option<String>,
+    pub bits_per_sample: Option<i64>,
+    pub samples_per_pixel: Option<i64>,
+    pub has_alpha: Option<bool>,
+    pub preferred_renderer: Option<String>,
+    pub renderer_version: Option<String>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtistCredit {
     pub name: String,

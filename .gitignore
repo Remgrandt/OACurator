@@ -23,6 +23,8 @@ coverage/
 release-assets/
 *.tsbuildinfo
 src-tauri/target/
+src-tauri/resources/libvips/*
+!src-tauri/resources/libvips/.gitkeep
 __pycache__/
 *.py[cod]
 .venv/

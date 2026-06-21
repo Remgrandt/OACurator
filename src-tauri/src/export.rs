@@ -1,9 +1,12 @@
 // Copyright (c) 2026 Remgrandt Works. All rights reserved.
 
-use crate::catalog::{Catalog, DerivedAsset, DerivedAssetInsert};
+use crate::catalog::{Catalog, DerivedAsset, DerivedAssetInsert, DerivedAssetRenderInsert};
 use crate::file_ops::PlanStatus;
+use crate::image_render::{
+    basic_png_export_recipe, premium_png_export_recipe, render_image_to_file, RenderLimits,
+    RenderPurpose, RenderRequest, RenderedImage,
+};
 use crate::{AppError, Result};
-use image::imageops::FilterType;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,17 +21,17 @@ pub enum PngExportVariant {
 }
 
 impl PngExportVariant {
-    fn max_height(self) -> u32 {
-        match self {
-            PngExportVariant::Basic => 800,
-            PngExportVariant::Premium => 2000,
-        }
-    }
-
     fn image_role(self) -> &'static str {
         match self {
             PngExportVariant::Basic => "basic",
             PngExportVariant::Premium => "premium",
+        }
+    }
+
+    fn render_purpose(self) -> RenderPurpose {
+        match self {
+            PngExportVariant::Basic => RenderPurpose::ExportBasicPng,
+            PngExportVariant::Premium => RenderPurpose::ExportPremiumPng,
         }
     }
 }
@@ -57,30 +60,37 @@ pub fn create_png_derivative(
             "PNG export requires a JPG, PNG, or TIFF source file".to_string(),
         ));
     }
-    let image = image::open(&source.current_path)?;
-    let output_image = if image.height() > variant.max_height() {
-        let height = variant.max_height();
-        let width = scaled_width_for_height(image.width(), image.height(), height);
-        image.resize_exact(width, height, FilterType::Lanczos3)
-    } else {
-        image
-    };
     let folder = export_root.join(&detail.canonical_id);
     fs::create_dir_all(&folder)?;
     let path = unique_export_path(&folder, &detail.canonical_id, &detail.title);
-    output_image.save_with_format(&path, image::ImageFormat::Png)?;
-    catalog.add_derived_asset(
+    let rendered = render_image_to_file(RenderRequest {
+        source_path: source.current_path.clone(),
+        destination_path: path,
+        purpose: variant.render_purpose(),
+        recipe: match variant {
+            PngExportVariant::Basic => basic_png_export_recipe(),
+            PngExportVariant::Premium => premium_png_export_recipe(),
+        },
+        limits: RenderLimits::default(),
+    })?;
+    let derived = catalog.add_derived_asset(
         artwork_id,
         DerivedAssetInsert {
             source_file_asset_id: Some(source_file_asset_id),
             derivative_type: "png_export",
-            format: "png",
-            path: &path,
-            width: output_image.width() as i64,
-            height: output_image.height() as i64,
+            format: &rendered.format,
+            path: &rendered.path,
+            width: i64::from(rendered.width),
+            height: i64::from(rendered.height),
             image_role: Some(variant.image_role()),
         },
-    )
+    )?;
+    catalog.add_derived_asset_render(render_metadata_insert(
+        derived.id,
+        variant.render_purpose(),
+        &rendered,
+    ))?;
+    Ok(derived)
 }
 
 fn is_renderable_png_export_source(extension: &str) -> bool {
@@ -88,11 +98,6 @@ fn is_renderable_png_export_source(extension: &str) -> bool {
         extension.trim().to_ascii_lowercase().as_str(),
         "jpg" | "jpeg" | "png" | "tif" | "tiff"
     )
-}
-
-fn scaled_width_for_height(width: u32, height: u32, target_height: u32) -> u32 {
-    let numerator = u64::from(width) * u64::from(target_height) + (u64::from(height) / 2);
-    ((numerator / u64::from(height)) as u32).max(1)
 }
 
 fn unique_export_path(folder: &Path, canonical_id: &str, title: &str) -> PathBuf {
@@ -110,6 +115,30 @@ fn unique_export_path(folder: &Path, canonical_id: &str, title: &str) -> PathBuf
         index += 1;
     }
     candidate
+}
+
+fn render_metadata_insert(
+    derived_asset_id: i64,
+    purpose: RenderPurpose,
+    rendered: &RenderedImage,
+) -> DerivedAssetRenderInsert {
+    DerivedAssetRenderInsert {
+        derived_asset_id,
+        purpose: purpose.as_str().to_string(),
+        recipe_key: rendered.recipe_key.clone(),
+        recipe_json: rendered.recipe_json.clone(),
+        source_path: rendered.source_fingerprint.path.clone(),
+        source_size_bytes: rendered.source_fingerprint.size_bytes,
+        source_modified_at: rendered.source_fingerprint.modified_at.clone(),
+        source_width: i64::from(rendered.source_fingerprint.width),
+        source_height: i64::from(rendered.source_fingerprint.height),
+        output_width: i64::from(rendered.width),
+        output_height: i64::from(rendered.height),
+        output_size_bytes: rendered.bytes,
+        renderer: rendered.renderer.clone(),
+        renderer_version: rendered.renderer_version.clone(),
+        renderer_options_json: rendered.renderer_options_json.clone(),
+    }
 }
 
 #[allow(dead_code)]

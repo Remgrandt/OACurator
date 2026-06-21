@@ -891,7 +891,9 @@ function WorkbenchApp() {
                       aria-label={`Remove Artwork from ${gallery.name}`}
                       disabled={!canRemoveFromGallery || removingGalleryId !== null}
                       title={isRemoving ? "Removing Artwork from Gallery" : removeTitle}
-                      onClick={() => void removeSelectedArtworkFromGallery(gallery.id, gallery.name)}
+                      onClick={() =>
+                        void removeSelectedArtworkFromGallery(gallery.id, gallery.name)
+                      }
                     >
                       <ToolbarIcon name="layers-minus" />
                     </button>
@@ -3766,10 +3768,7 @@ function WorkbenchApp() {
                         <input value={detail.display_id ?? detail.canonical_id} readOnly />
                       </PropertyRow>,
                     )}
-                    {renderFilteredProperty(
-                      "Gallery",
-                      renderGalleryMembershipProperty(),
-                    )}
+                    {renderFilteredProperty("Gallery", renderGalleryMembershipProperty())}
                     {renderFilteredProperty(
                       "Title",
                       <PropertyRow label="Title">

@@ -2,8 +2,10 @@
 
 use crate::catalog::{ArtworkDetail, Catalog, FileAsset};
 use crate::export_policy::ExportPolicy;
+use crate::image_render::{
+    raremarq_upload_jpeg_recipe, render_image_to_file, RenderLimits, RenderPurpose, RenderRequest,
+};
 use crate::{AppError, Result};
-use image::codecs::jpeg::JpegEncoder;
 use reqwest::blocking::{multipart, Client};
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::DefaultHasher, BTreeSet};
@@ -538,14 +540,16 @@ fn stage_upload_file(
 }
 
 fn write_downsized_jpeg(source: &Path, target: &Path) -> Result<()> {
-    let image = image::open(source)?;
     let mut max_dimension = 2000u32;
     let mut quality = 86u8;
     loop {
-        let resized = image.thumbnail(max_dimension, max_dimension);
-        let file = File::create(target)?;
-        let mut encoder = JpegEncoder::new_with_quality(file, quality);
-        encoder.encode_image(&resized)?;
+        render_image_to_file(RenderRequest {
+            source_path: source.to_path_buf(),
+            destination_path: target.to_path_buf(),
+            purpose: RenderPurpose::RaremarqUploadImage,
+            recipe: raremarq_upload_jpeg_recipe(max_dimension, quality),
+            limits: RenderLimits::default(),
+        })?;
         if fs::metadata(target)?.len() <= RAREMARQ_MAX_UPLOAD_BYTES {
             return Ok(());
         }

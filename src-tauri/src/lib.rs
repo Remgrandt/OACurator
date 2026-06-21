@@ -8,6 +8,7 @@ pub mod export_policy;
 pub mod file_operations;
 pub mod file_ops;
 pub mod image_metadata;
+pub mod image_render;
 pub mod jobs;
 pub mod manifest;
 pub mod oaa_archive;
