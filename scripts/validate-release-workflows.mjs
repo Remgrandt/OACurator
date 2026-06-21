@@ -77,6 +77,10 @@ assert(
   !windowsRelease.includes('.ContainsKey('),
   'Windows Release workflow must use OrderedDictionary-compatible .Contains(...) checks.',
 );
+assert(
+  windowsRelease.includes('$global:LASTEXITCODE = 0'),
+  'Windows Release workflow must clear LASTEXITCODE after expected missing-release checks.',
+);
 
 for (const forbidden of [
   'gh release create',

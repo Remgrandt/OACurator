@@ -219,7 +219,11 @@ jobs:
           New-Item -ItemType Directory -Force $existingLatestDir | Out-Null
 
           gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = $LASTEXITCODE -eq 0
+          if (-not $releaseExists) {
+            $global:LASTEXITCODE = 0
+          }
+          if ($releaseExists) {
             gh release download $releaseTag --repo $env:GITHUB_REPOSITORY --pattern latest.json --dir $existingLatestDir --clobber
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to download existing latest.json for $releaseTag."
@@ -310,7 +314,11 @@ jobs:
           }
 
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $releaseExists = $LASTEXITCODE -eq 0
+          if (-not $releaseExists) {
+            $global:LASTEXITCODE = 0
+          }
+          if ($releaseExists) {
             $releaseArgs = @("release", "upload", $tag)
             $releaseArgs += $assets
             $releaseArgs += @("--repo", $env:GITHUB_REPOSITORY, "--clobber")
