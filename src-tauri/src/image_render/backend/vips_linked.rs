@@ -138,38 +138,37 @@ fn save_rendered_image(
     path: &Path,
     output_format: &OutputFormat,
 ) -> std::result::Result<(), RenderError> {
-    let output_path = path_to_c_string(path).map_err(|detail| RenderError::EncodeFailed {
-        path: path.to_path_buf(),
-        detail,
-    })?;
-    let status = match output_format {
-        OutputFormat::Png => unsafe {
-            ffi::vips_pngsave(image.as_ptr(), output_path.as_ptr(), ptr::null::<c_void>())
-        },
-        OutputFormat::Jpeg { quality } => {
-            let quality_name = c_string_literal("Q");
-            unsafe {
-                ffi::vips_jpegsave(
-                    image.as_ptr(),
-                    output_path.as_ptr(),
-                    quality_name.as_ptr(),
-                    c_int::from(*quality),
-                    ptr::null::<c_void>(),
-                )
-            }
+    let output_path = path_to_vips_write_string(path, output_format).map_err(|detail| {
+        RenderError::EncodeFailed {
+            path: path.to_path_buf(),
+            detail,
         }
+    })?;
+    let status = unsafe {
+        ffi::vips_image_write_to_file(image.as_ptr(), output_path.as_ptr(), ptr::null::<c_void>())
     };
     if status == 0 {
         Ok(())
     } else {
         Err(RenderError::EncodeFailed {
             path: path.to_path_buf(),
-            detail: linked_vips_error_detail(match output_format {
-                OutputFormat::Png => "pngsave",
-                OutputFormat::Jpeg { .. } => "jpegsave",
-            }),
+            detail: linked_vips_error_detail("image_write_to_file"),
         })
     }
+}
+
+fn path_to_vips_write_string(
+    path: &Path,
+    output_format: &OutputFormat,
+) -> std::result::Result<CString, String> {
+    let mut path = path.to_string_lossy().to_string();
+    if let OutputFormat::Jpeg { quality } = output_format {
+        path.push_str(&format!("[Q={quality}]"));
+    }
+    let display_path = path.clone();
+
+    CString::new(path.into_bytes())
+        .map_err(|_| format!("path contains an interior NUL byte: {display_path}"))
 }
 
 fn source_has_transparency(path: &Path) -> bool {
@@ -442,8 +441,8 @@ mod ffi {
             width: c_int,
             ...
         ) -> c_int;
-        pub fn vips_pngsave(in_: *mut VipsImage, filename: *const c_char, ...) -> c_int;
-        pub fn vips_jpegsave(in_: *mut VipsImage, filename: *const c_char, ...) -> c_int;
+        pub fn vips_image_write_to_file(in_: *mut VipsImage, filename: *const c_char, ...)
+            -> c_int;
         pub fn vips_image_new_from_file(name: *const c_char, ...) -> *mut VipsImage;
         pub fn vips_image_get_bands(image: *const VipsImage) -> c_int;
         pub fn vips_image_get_format(image: *const VipsImage) -> c_int;
