@@ -31,10 +31,48 @@ concurrency:
   group: macos-release
   cancel-in-progress: false
 
+env:
+  MACOSX_DEPLOYMENT_TARGET: "10.15"
+  MACOS_ARM64_DEPLOYMENT_TARGET: "11.0"
+
 jobs:
-  macos-build:
-    name: Build signed and notarized macOS app (${{ matrix.arch }})
+  source-check:
+    name: Check macOS release source
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-docs.txt
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install documentation dependencies
+        run: python -m pip install -r requirements-docs.txt
+
+      - name: Check release source
+        run: npm run check:release
+
+  libvips-runtime:
+    name: Bundle macOS libvips runtime (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    needs: source-check
 
     strategy:
       fail-fast: false
@@ -42,14 +80,62 @@ jobs:
         include:
           - arch: arm64
             runner: macos-26
-            rust_target: aarch64-apple-darwin
-            release_script: release:macos:arm64
             expected_file_arch: arm64
           - arch: x64
             runner: macos-26-intel
-            rust_target: x86_64-apple-darwin
-            release_script: release:macos:x64
             expected_file_arch: x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bundle libvips runtime
+        run: bash scripts/install-libvips-macos.sh
+
+      - name: Verify staged libvips runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          libvips_dir="src-tauri/resources/libvips"
+
+          test -x "$libvips_dir/vips"
+          test -x "$libvips_dir/vipsheader"
+
+          file "$libvips_dir/vips"
+          file "$libvips_dir/vips" | grep -q "${{ matrix.expected_file_arch }}"
+          "$libvips_dir/vips" --version
+
+          if find "$libvips_dir" -type f -perm -111 -print0 |
+            xargs -0 otool -L |
+            grep -E '/(opt/homebrew|usr/local)/(Cellar|opt)/|/opt/local/' ; then
+            echo "::error::Bundled libvips still references package-manager library paths."
+            exit 1
+          fi
+
+          smoke_source="$RUNNER_TEMP/oac-libvips-smoke.tif"
+          smoke_output="$RUNNER_TEMP/oac-libvips-smoke.png"
+          "$libvips_dir/vips" black "$smoke_source" 4096 4096 --bands 3
+          "$libvips_dir/vips" thumbnail "$smoke_source" "$smoke_output" 800 --height 800 --size down
+          test "$("$libvips_dir/vipsheader" -f height "$smoke_output")" = "800"
+
+      - name: Archive libvips runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-artifacts
+          tar -czf "runtime-artifacts/libvips-${{ matrix.arch }}.tar.gz" -C src-tauri/resources libvips
+
+      - name: Upload libvips runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: oa-curator-macos-libvips-${{ matrix.arch }}
+          path: runtime-artifacts/*
+          if-no-files-found: error
+
+  macos-universal:
+    name: Build signed and notarized universal macOS app
+    runs-on: macos-26
+    needs: libvips-runtime
 
     env:
       APPLE_SIGNING_IDENTITY: "Developer ID Application: Remgrandt Games LLC (3GHU5785J6)"
@@ -106,7 +192,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -121,37 +207,38 @@ jobs:
       - name: Install documentation dependencies
         run: python -m pip install -r requirements-docs.txt
 
-      - name: Bundle libvips runtime
-        run: npm run setup:libvips:macos
+      - name: Download architecture libvips runtimes
+        uses: actions/download-artifact@v4
+        with:
+          pattern: oa-curator-macos-libvips-*
+          path: ${{ runner.temp }}/libvips-inputs
 
-      - name: Verify staged libvips runtime
+      - name: Make universal libvips runtime
         shell: bash
         run: |
           set -euo pipefail
-          libvips_dir="src-tauri/resources/libvips"
+          arm64_extract="$RUNNER_TEMP/libvips-arm64"
+          x64_extract="$RUNNER_TEMP/libvips-x64"
+          mkdir -p "$arm64_extract" "$x64_extract"
 
-          test -x "$libvips_dir/vips"
-          test -x "$libvips_dir/vipsheader"
+          tar -xzf "$RUNNER_TEMP/libvips-inputs/oa-curator-macos-libvips-arm64/libvips-arm64.tar.gz" -C "$arm64_extract"
+          tar -xzf "$RUNNER_TEMP/libvips-inputs/oa-curator-macos-libvips-x64/libvips-x64.tar.gz" -C "$x64_extract"
 
-          file "$libvips_dir/vips"
-          file "$libvips_dir/vips" | grep -q "${{ matrix.expected_file_arch }}"
-          "$libvips_dir/vips" --version
+          bash scripts/make-universal-libvips-macos.sh \
+            "$arm64_extract/libvips" \
+            "$x64_extract/libvips" \
+            "src-tauri/resources/libvips"
 
-          if find "$libvips_dir" -type f -perm -111 -print0 |
-            xargs -0 otool -L |
-            grep -E '/(opt/homebrew|usr/local)/(Cellar|opt)/|/opt/local/' ; then
-            echo "::error::Bundled libvips still references package-manager library paths."
-            exit 1
-          fi
+          bash scripts/verify-macos-universal-runtime.sh \
+            "src-tauri/resources/libvips" \
+            "$MACOSX_DEPLOYMENT_TARGET" \
+            "$MACOS_ARM64_DEPLOYMENT_TARGET"
 
-          smoke_source="$RUNNER_TEMP/oac-libvips-smoke.tif"
-          smoke_output="$RUNNER_TEMP/oac-libvips-smoke.png"
-          "$libvips_dir/vips" black "$smoke_source" 4096 4096 --bands 3
-          "$libvips_dir/vips" thumbnail "$smoke_source" "$smoke_output" 800 --height 800 --size down
-          test "$("$libvips_dir/vipsheader" -f height "$smoke_output")" = "800"
-
-      - name: Check release source
-        run: npm run check:release
+          smoke_source="$RUNNER_TEMP/oac-universal-libvips-smoke.tif"
+          smoke_output="$RUNNER_TEMP/oac-universal-libvips-smoke.png"
+          "src-tauri/resources/libvips/vips" black "$smoke_source" 4096 4096 --bands 3
+          "src-tauri/resources/libvips/vips" thumbnail "$smoke_source" "$smoke_output" 800 --height 800 --size down
+          test "$("src-tauri/resources/libvips/vipsheader" -f height "$smoke_output")" = "800"
 
       - name: Import Apple Developer ID certificate
         env:
@@ -184,7 +271,7 @@ jobs:
 
           echo "KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
 
-      - name: Sign staged libvips runtime
+      - name: Sign staged universal libvips runtime
         shell: bash
         run: |
           set -euo pipefail
@@ -219,24 +306,24 @@ jobs:
           chmod 600 "$private_key_path"
           echo "APPLE_API_KEY_PATH=$private_key_path" >> "$GITHUB_ENV"
 
-      - name: Build signed and notarized macOS package
+      - name: Build signed and notarized universal macOS package
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run ${{ matrix.release_script }}
+        run: npm run release:macos
 
-      - name: Verify macOS signatures and notarization
+      - name: Verify universal macOS signatures and notarization
         shell: bash
         run: |
           set -euo pipefail
-          bundle_dir="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
-          dmg_file="$(find "$bundle_dir" -type f -name '*.dmg' | head -n 1)"
+          bundle_dir="src-tauri/target/universal-apple-darwin/release/bundle"
+          dmg_file="$(find "$bundle_dir" -type f -name '*_universal.dmg' | head -n 1)"
           mount_dir="$RUNNER_TEMP/oacurator-dmg"
 
           if [ -z "$dmg_file" ]; then
-            echo "::error::No .dmg file was produced."
+            echo "::error::No universal .dmg file was produced."
             exit 1
           fi
 
@@ -256,22 +343,21 @@ jobs:
           spctl --assess --type execute --verbose=4 "$app_bundle"
           xcrun stapler validate "$app_bundle"
 
+          app_binary="$app_bundle/Contents/MacOS/oa-curator"
+          if [ ! -x "$app_binary" ]; then
+            echo "::error::The app bundle does not contain the expected executable."
+            exit 1
+          fi
+          lipo -verify_arch arm64 x86_64 "$app_binary"
+          bash scripts/verify-macos-universal-runtime.sh "$app_bundle" "$MACOSX_DEPLOYMENT_TARGET" "$MACOS_ARM64_DEPLOYMENT_TARGET"
+
           libvips_dir="$app_bundle/Contents/Resources/resources/libvips"
           if [ ! -x "$libvips_dir/vips" ] || [ ! -x "$libvips_dir/vipsheader" ]; then
             echo "::error::The app bundle does not contain executable libvips tools."
             exit 1
           fi
-
-          file "$libvips_dir/vips"
-          file "$libvips_dir/vips" | grep -q "${{ matrix.expected_file_arch }}"
+          bash scripts/verify-macos-universal-runtime.sh "$libvips_dir" "$MACOSX_DEPLOYMENT_TARGET" "$MACOS_ARM64_DEPLOYMENT_TARGET"
           "$libvips_dir/vips" --version
-
-          if find "$libvips_dir" -type f -perm -111 -print0 |
-            xargs -0 otool -L |
-            grep -E '/(opt/homebrew|usr/local)/(Cellar|opt)/|/opt/local/' ; then
-            echo "::error::App-bundled libvips still references package-manager library paths."
-            exit 1
-          fi
 
           smoke_source="$RUNNER_TEMP/oac-bundled-libvips-smoke.tif"
           smoke_output="$RUNNER_TEMP/oac-bundled-libvips-smoke.png"
@@ -284,30 +370,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          bundle_dir="src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+          bundle_dir="src-tauri/target/universal-apple-darwin/release/bundle"
           find "$bundle_dir" -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) -print0 |
             while IFS= read -r -d '' file; do
               name="$(basename "$file" | tr ' ' '.')"
-              cp "$file" "release-assets/${{ matrix.arch }}-$name"
+              cp "$file" "release-assets/$name"
             done
 
-          dmg_count="$(find release-assets -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d ' ')"
+          dmg_count="$(find release-assets -maxdepth 1 -type f -name '*_universal.dmg' | wc -l | tr -d ' ')"
           updater_count="$(find release-assets -maxdepth 1 -type f -name '*.app.tar.gz' | wc -l | tr -d ' ')"
           signature_count="$(find release-assets -maxdepth 1 -type f -name '*.app.tar.gz.sig' | wc -l | tr -d ' ')"
 
-          if [ "$dmg_count" -eq 0 ]; then
-            echo "::error::No macOS DMG was collected."
+          if [ "$dmg_count" -ne 1 ]; then
+            echo "::error::Expected exactly one universal macOS DMG, found $dmg_count."
             exit 1
           fi
-          if [ "$updater_count" -eq 0 ] || [ "$signature_count" -eq 0 ]; then
-            echo "::error::No macOS updater archive and signature were collected."
+          if [ "$updater_count" -ne 1 ] || [ "$signature_count" -ne 1 ]; then
+            echo "::error::Expected exactly one macOS updater archive and signature."
             exit 1
           fi
 
       - name: Upload macOS build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: oa-curator-macos-${{ matrix.arch }}-release-assets
+          name: oa-curator-macos-universal-release-assets
           path: release-assets/*
           if-no-files-found: error
 
@@ -322,7 +408,7 @@ jobs:
   publish:
     name: Publish macOS release artifacts
     runs-on: ubuntu-latest
-    needs: macos-build
+    needs: macos-universal
 
     steps:
       - name: Checkout
@@ -364,9 +450,8 @@ jobs:
       - name: Download macOS build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: oa-curator-macos-*-release-assets
+          name: oa-curator-macos-universal-release-assets
           path: release-assets
-          merge-multiple: true
 
       - name: Generate updater manifest
         env:
@@ -424,28 +509,27 @@ jobs:
           if not isinstance(platforms, dict):
               platforms = {}
 
-          platform_by_arch = {
-              "arm64": "darwin-aarch64",
-              "x64": "darwin-x86_64",
-          }
-          for arch, platform in platform_by_arch.items():
-              updater_artifacts = sorted(release_assets.glob(f"{arch}-*.app.tar.gz"))
-              if not updater_artifacts:
-                  raise SystemExit(f"No macOS updater archive was collected for {arch}.")
-
-              updater_artifact = updater_artifacts[0]
-              signature_path = Path(f"{updater_artifact}.sig")
-              if not signature_path.exists():
-                  raise SystemExit(f"No updater signature found for {updater_artifact.name}.")
-
-              asset_url = (
-                  f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/"
-                  f"releases/download/{os.environ['RELEASE_TAG']}/{updater_artifact.name}"
+          updater_artifacts = sorted(release_assets.glob("*.app.tar.gz"))
+          if len(updater_artifacts) != 1:
+              raise SystemExit(
+                  f"Expected one universal macOS updater archive, found {len(updater_artifacts)}."
               )
-              platforms[platform] = {
-                  "signature": signature_path.read_text(encoding="utf-8").strip(),
-                  "url": asset_url,
-              }
+
+          universal_updater_artifact = updater_artifacts[0]
+          signature_path = Path(f"{universal_updater_artifact}.sig")
+          if not signature_path.exists():
+              raise SystemExit(f"No updater signature found for {universal_updater_artifact.name}.")
+
+          asset_url = (
+              f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/"
+              f"releases/download/{os.environ['RELEASE_TAG']}/{universal_updater_artifact.name}"
+          )
+          macos_update = {
+              "signature": signature_path.read_text(encoding="utf-8").strip(),
+              "url": asset_url,
+          }
+          platforms["darwin-aarch64"] = macos_update
+          platforms["darwin-x86_64"] = macos_update
 
           latest["platforms"] = platforms
 

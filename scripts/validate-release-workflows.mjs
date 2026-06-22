@@ -43,6 +43,55 @@ for (const scriptName of ['release:macos', 'release:macos:arm64', 'release:macos
 }
 
 assertIncludes(
+  packageJson.scripts['release:macos'],
+  '--target universal-apple-darwin',
+  'universal macOS package script',
+);
+assertIncludes(
+  macosRelease,
+  'MACOSX_DEPLOYMENT_TARGET: "10.15"',
+  'macOS Release Intel compatibility target',
+);
+assertIncludes(
+  macosRelease,
+  'MACOS_ARM64_DEPLOYMENT_TARGET: "11.0"',
+  'macOS Release Apple Silicon compatibility target',
+);
+assertIncludes(
+  macosRelease,
+  'Make universal libvips runtime',
+  'macOS Release universal runtime merge',
+);
+assertIncludes(
+  macosRelease,
+  'Build signed and notarized universal macOS package',
+  'macOS Release universal app build',
+);
+assertIncludes(
+  macosRelease,
+  'Verify universal macOS signatures and notarization',
+  'macOS Release universal app verification',
+);
+assertIncludes(
+  macosRelease,
+  'verify-macos-universal-runtime.sh "$app_bundle" "$MACOSX_DEPLOYMENT_TARGET" "$MACOS_ARM64_DEPLOYMENT_TARGET"',
+  'macOS Release Catalina app bundle compatibility verification',
+);
+assertIncludes(
+  macosRelease,
+  'universal_updater_artifact',
+  'macOS Release updater manifest generation',
+);
+assert(
+  !macosRelease.includes('release-assets/${{ matrix.arch }}-'),
+  'macOS Release workflow must not publish architecture-prefixed macOS release assets.',
+);
+assert(
+  !macosRelease.includes('platform_by_arch = {'),
+  'macOS Release workflow must not publish split macOS updater artifacts by architecture.',
+);
+
+assertIncludes(
   publishStagedRelease,
   'name: Publish Staged Release',
   'Publish Staged Release workflow',
