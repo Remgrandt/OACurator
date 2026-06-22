@@ -88,13 +88,13 @@ while IFS= read -r relative_path; do
   fi
 done < "$relative_files"
 
-for required_tool in vips vipsheader; do
-  tool_path="$output_dir/$required_tool"
-  if [[ ! -x "$tool_path" ]]; then
-    echo "Universal libvips runtime is missing executable $required_tool." >&2
+for required_library in libvips-cpp.dylib libvips-cpp.42.dylib; do
+  library_path="$output_dir/$required_library"
+  if [[ ! -f "$library_path" ]]; then
+    echo "Universal libvips runtime is missing $required_library." >&2
     exit 1
   fi
-  lipo "$tool_path" -verify_arch arm64 x86_64 >/dev/null
+  lipo "$library_path" -verify_arch arm64 x86_64 >/dev/null
 done
 
-"$output_dir/vips" --version
+echo "Created universal macOS libvips runtime at $output_dir."

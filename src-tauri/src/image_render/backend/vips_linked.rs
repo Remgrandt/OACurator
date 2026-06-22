@@ -427,9 +427,10 @@ mod ffi {
         _private: [u8; 0],
     }
 
-    #[link(name = "vips")]
-    #[link(name = "glib-2.0")]
-    #[link(name = "gobject-2.0")]
+    #[cfg_attr(target_os = "macos", link(name = "vips-cpp"))]
+    #[cfg_attr(not(target_os = "macos"), link(name = "vips"))]
+    #[cfg_attr(not(target_os = "macos"), link(name = "glib-2.0"))]
+    #[cfg_attr(not(target_os = "macos"), link(name = "gobject-2.0"))]
     unsafe extern "C" {
         pub fn vips_init(argv0: *const c_char) -> c_int;
         pub fn vips_version_string() -> *const c_char;

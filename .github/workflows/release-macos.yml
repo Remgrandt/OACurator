@@ -115,12 +115,13 @@ jobs:
           set -euo pipefail
           libvips_dir="src-tauri/resources/libvips"
 
-          test -x "$libvips_dir/vips"
-          test -x "$libvips_dir/vipsheader"
+          test -f "$libvips_dir/libvips-cpp.dylib"
+          test -f "$libvips_dir/libvips-cpp.42.dylib"
+          test -f "$libvips_dir/THIRD-PARTY-NOTICES-sharp-libvips.md"
+          test -f "$libvips_dir/sharp-libvips-versions.json"
 
-          file "$libvips_dir/vips"
-          file "$libvips_dir/vips" | grep -q "${{ matrix.expected_file_arch }}"
-          "$libvips_dir/vips" --version
+          file "$libvips_dir/libvips-cpp.dylib"
+          file "$libvips_dir/libvips-cpp.dylib" | grep -q "${{ matrix.expected_file_arch }}"
           bash scripts/verify-macos-runtime-arch.sh \
             "$libvips_dir" \
             "${{ matrix.expected_file_arch }}" \
@@ -132,12 +133,6 @@ jobs:
             echo "::error::Bundled libvips still references package-manager library paths."
             exit 1
           fi
-
-          smoke_source="$RUNNER_TEMP/oac-libvips-smoke.tif"
-          smoke_output="$RUNNER_TEMP/oac-libvips-smoke.png"
-          "$libvips_dir/vips" black "$smoke_source" 4096 4096 --bands 3
-          "$libvips_dir/vips" thumbnail "$smoke_source" "$smoke_output" 800 --height 800 --size down
-          test "$("$libvips_dir/vipsheader" -f height "$smoke_output")" = "800"
 
       - name: Archive libvips runtime
         shell: bash
@@ -255,12 +250,6 @@ jobs:
             "$MACOSX_DEPLOYMENT_TARGET" \
             "$MACOS_ARM64_DEPLOYMENT_TARGET"
 
-          smoke_source="$RUNNER_TEMP/oac-universal-libvips-smoke.tif"
-          smoke_output="$RUNNER_TEMP/oac-universal-libvips-smoke.png"
-          "src-tauri/resources/libvips/vips" black "$smoke_source" 4096 4096 --bands 3
-          "src-tauri/resources/libvips/vips" thumbnail "$smoke_source" "$smoke_output" 800 --height 800 --size down
-          test "$("src-tauri/resources/libvips/vipsheader" -f height "$smoke_output")" = "800"
-
       - name: Import Apple Developer ID certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
@@ -373,18 +362,11 @@ jobs:
           bash scripts/verify-macos-universal-runtime.sh "$app_bundle" "$MACOSX_DEPLOYMENT_TARGET" "$MACOS_ARM64_DEPLOYMENT_TARGET"
 
           libvips_dir="$app_bundle/Contents/Resources/resources/libvips"
-          if [ ! -x "$libvips_dir/vips" ] || [ ! -x "$libvips_dir/vipsheader" ]; then
-            echo "::error::The app bundle does not contain executable libvips tools."
+          if [ ! -f "$libvips_dir/libvips-cpp.dylib" ] || [ ! -f "$libvips_dir/libvips-cpp.42.dylib" ]; then
+            echo "::error::The app bundle does not contain the expected libvips shared library."
             exit 1
           fi
           bash scripts/verify-macos-universal-runtime.sh "$libvips_dir" "$MACOSX_DEPLOYMENT_TARGET" "$MACOS_ARM64_DEPLOYMENT_TARGET"
-          "$libvips_dir/vips" --version
-
-          smoke_source="$RUNNER_TEMP/oac-bundled-libvips-smoke.tif"
-          smoke_output="$RUNNER_TEMP/oac-bundled-libvips-smoke.png"
-          "$libvips_dir/vips" black "$smoke_source" 4096 4096 --bands 3
-          "$libvips_dir/vips" thumbnail "$smoke_source" "$smoke_output" 800 --height 800 --size down
-          test "$("$libvips_dir/vipsheader" -f height "$smoke_output")" = "800"
 
       - name: Collect macOS release assets
         shell: bash

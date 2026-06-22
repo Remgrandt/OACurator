@@ -82,9 +82,18 @@ assertIncludes(
   'verify-macos-runtime-arch.sh',
   'macOS Release per-architecture runtime compatibility verification',
 );
+assertIncludes(
+  macosRelease,
+  'libvips-cpp.dylib',
+  'macOS Release single-dylib libvips runtime',
+);
 assert(
   !macosRelease.includes('macos-26'),
   'macOS Release workflow must not use macOS 26 runners while preserving Catalina Intel compatibility.',
+);
+assert(
+  !macosRelease.includes('"$libvips_dir/vips"'),
+  'macOS Release workflow must not require Homebrew-style libvips command-line tools.',
 );
 assertIncludes(
   macosRelease,

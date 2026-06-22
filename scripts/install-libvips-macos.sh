@@ -4,70 +4,63 @@
 set -euo pipefail
 
 resource_path="${1:-src-tauri/resources/libvips}"
+sharp_libvips_version="${OACURATOR_SHARP_LIBVIPS_VERSION:-1.2.4}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This installer is for macOS libvips builds only." >&2
   exit 1
 fi
 
-if ! command -v brew >/dev/null 2>&1; then
-  echo "Homebrew is required to bundle libvips on macOS." >&2
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is required to download the macOS libvips runtime." >&2
   exit 1
 fi
 
-brew install vips dylibbundler
+case "$(uname -m)" in
+  arm64)
+    sharp_libvips_package="@img/sharp-libvips-darwin-arm64"
+    ;;
+  x86_64)
+    sharp_libvips_package="@img/sharp-libvips-darwin-x64"
+    ;;
+  *)
+    echo "Unsupported macOS architecture for libvips runtime: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
 
 mkdir -p "$resource_path"
 find "$resource_path" -mindepth 1 -maxdepth 1 ! -name ".gitkeep" -exec rm -rf {} +
-lib_stage="$(mktemp -d)"
-trap 'rm -rf "$lib_stage"' EXIT
+work_dir="$(mktemp -d)"
+trap 'rm -rf "$work_dir"' EXIT
 
-vips_prefix="$(brew --prefix vips)"
-vips_bin="$vips_prefix/bin/vips"
-vipsheader_bin="$vips_prefix/bin/vipsheader"
+tarball_name="$(
+  npm pack "${sharp_libvips_package}@${sharp_libvips_version}" \
+    --pack-destination "$work_dir" \
+    --silent |
+    tail -n 1
+)"
+tarball_path="$work_dir/$tarball_name"
+extract_dir="$work_dir/extract"
+mkdir -p "$extract_dir"
+tar -xzf "$tarball_path" -C "$extract_dir"
 
-if [[ ! -x "$vips_bin" || ! -x "$vipsheader_bin" ]]; then
-  echo "Could not find Homebrew vips command-line tools under $vips_prefix." >&2
+vips_cpp_source="$(
+  find "$extract_dir/package/lib" -maxdepth 1 -type f -name 'libvips-cpp.*.dylib' |
+    sort |
+    head -n 1
+)"
+
+if [[ -z "$vips_cpp_source" ]]; then
+  echo "Could not find libvips-cpp dylib in ${sharp_libvips_package}@${sharp_libvips_version}." >&2
   exit 1
 fi
 
-cp "$vips_bin" "$resource_path/vips"
-cp "$vipsheader_bin" "$resource_path/vipsheader"
-chmod 755 "$resource_path/vips" "$resource_path/vipsheader"
-
-while IFS= read -r -d '' module_dir; do
-  cp -R "$module_dir" "$resource_path/$(basename "$module_dir")"
-done < <(find "$vips_prefix/lib" -maxdepth 1 -type d -name 'vips-modules-*' -print0)
-
-dylib_inputs=("$resource_path/vips" "$resource_path/vipsheader")
-while IFS= read -r -d '' mach_o; do
-  if file "$mach_o" | grep -Eq 'Mach-O.*(dynamically linked shared library|bundle)'; then
-    dylib_inputs+=("$mach_o")
-  fi
-done < <(find "$resource_path" -type f -print0)
-
-dylib_args=()
-for input in "${dylib_inputs[@]}"; do
-  dylib_args+=("-x" "$input")
-done
-
-dylibbundler -od -b "${dylib_args[@]}" -d "$lib_stage" -p "@executable_path"
-cp -R "$lib_stage"/. "$resource_path"/
-
-ensure_link_alias() {
-  local existing="$1"
-  local alias="$2"
-
-  if [[ ! -e "$existing" ]]; then
-    echo "Missing libvips link input: $existing" >&2
-    exit 1
-  fi
-  ln -sf "$(basename "$existing")" "$alias"
-}
-
-ensure_link_alias "$resource_path/libvips.42.dylib" "$resource_path/libvips.dylib"
-ensure_link_alias "$resource_path/libglib-2.0.0.dylib" "$resource_path/libglib-2.0.dylib"
-ensure_link_alias "$resource_path/libgobject-2.0.0.dylib" "$resource_path/libgobject-2.0.dylib"
+cp "$vips_cpp_source" "$resource_path/$(basename "$vips_cpp_source")"
+cp "$vips_cpp_source" "$resource_path/libvips-cpp.42.dylib"
+cp "$vips_cpp_source" "$resource_path/libvips-cpp.dylib"
+cp "$extract_dir/package/README.md" "$resource_path/THIRD-PARTY-NOTICES-sharp-libvips.md"
+cp "$extract_dir/package/versions.json" "$resource_path/sharp-libvips-versions.json"
 
 dedupe_rpaths() {
   local mach_o="$1"
@@ -99,4 +92,4 @@ while IFS= read -r -d '' mach_o; do
   fi
 done < <(find "$resource_path" -type f -print0)
 
-"$resource_path/vips" --version
+echo "Bundled ${sharp_libvips_package}@${sharp_libvips_version} as macOS libvips runtime."
