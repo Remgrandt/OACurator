@@ -42,4 +42,23 @@ Get-ChildItem -LiteralPath (Join-Path $vipsRoot.FullName "bin") -Filter *.exe |
 Get-ChildItem -LiteralPath (Join-Path $vipsRoot.FullName "bin") -Filter *.dll |
   Copy-Item -Destination $ResourcePath
 
+$libResourcePath = Join-Path $ResourcePath "lib"
+New-Item -ItemType Directory -Force $libResourcePath | Out-Null
+Get-ChildItem -LiteralPath (Join-Path $vipsRoot.FullName "lib") -Filter *.lib |
+  Copy-Item -Destination $libResourcePath
+
+$importLibraryAliases = @{
+  "libvips.lib" = "vips.lib"
+  "libglib-2.0.lib" = "glib-2.0.lib"
+  "libgobject-2.0.lib" = "gobject-2.0.lib"
+}
+foreach ($entry in $importLibraryAliases.GetEnumerator()) {
+  $source = Join-Path $libResourcePath $entry.Key
+  $destination = Join-Path $libResourcePath $entry.Value
+  if (-not (Test-Path -LiteralPath $source)) {
+    throw "Missing libvips import library $($entry.Key)."
+  }
+  Copy-Item -LiteralPath $source -Destination $destination -Force
+}
+
 & (Join-Path $ResourcePath "vips.exe") --version

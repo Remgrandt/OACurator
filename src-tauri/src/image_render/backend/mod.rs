@@ -7,6 +7,8 @@ use std::env;
 
 pub mod image_rs;
 pub mod vips;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub mod vips_linked;
 
 const DEFAULT_IMAGE_RS_FAST_PATH_MAX_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -32,13 +34,50 @@ pub fn render(
         }
     }
 
-    match vips::render(request, plan) {
+    match render_with_primary_vips_backend(request, plan) {
         Ok(result) => Ok(result),
         Err(RenderError::RendererUnavailable { .. }) if image_rs_fallback_allowed() => {
             image_rs::render(request, plan, image_rs::ImageRsMode::DebugFallback)
         }
         Err(error) => Err(error),
     }
+}
+
+fn render_with_primary_vips_backend(
+    request: &RenderRequest,
+    plan: &RenderPlan,
+) -> std::result::Result<BackendRenderResult, RenderError> {
+    render_with_primary_vips_backend_impl(request, plan)
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn render_with_primary_vips_backend_impl(
+    request: &RenderRequest,
+    plan: &RenderPlan,
+) -> std::result::Result<BackendRenderResult, RenderError> {
+    match vips_linked::render(request, plan) {
+        Ok(result) => Ok(result),
+        Err(RenderError::RendererUnavailable { .. }) => vips::render(request, plan),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn render_with_primary_vips_backend_impl(
+    request: &RenderRequest,
+    plan: &RenderPlan,
+) -> std::result::Result<BackendRenderResult, RenderError> {
+    vips::render(request, plan)
+}
+
+#[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
+fn primary_vips_backend_name() -> &'static str {
+    vips_linked::renderer_name()
+}
+
+#[cfg(all(test, not(any(target_os = "windows", target_os = "macos"))))]
+fn primary_vips_backend_name() -> &'static str {
+    "libvips-cli"
 }
 
 fn image_rs_fast_path_allowed(request: &RenderRequest, plan: &RenderPlan) -> bool {
@@ -149,5 +188,11 @@ mod tests {
         assert!(image_rs_fallback_allowed_from_value(Some("1")));
         assert!(image_rs_fallback_allowed_from_value(Some("true")));
         assert!(image_rs_fallback_allowed_from_value(Some("yes")));
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn primary_vips_backend_is_linked_on_desktop_release_platforms() {
+        assert_eq!(primary_vips_backend_name(), "libvips-linked");
     }
 }

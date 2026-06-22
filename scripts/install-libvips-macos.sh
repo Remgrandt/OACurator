@@ -54,6 +54,21 @@ done
 dylibbundler -od -b "${dylib_args[@]}" -d "$lib_stage" -p "@executable_path"
 cp -R "$lib_stage"/. "$resource_path"/
 
+ensure_link_alias() {
+  local existing="$1"
+  local alias="$2"
+
+  if [[ ! -e "$existing" ]]; then
+    echo "Missing libvips link input: $existing" >&2
+    exit 1
+  fi
+  ln -sf "$(basename "$existing")" "$alias"
+}
+
+ensure_link_alias "$resource_path/libvips.42.dylib" "$resource_path/libvips.dylib"
+ensure_link_alias "$resource_path/libglib-2.0.0.dylib" "$resource_path/libglib-2.0.dylib"
+ensure_link_alias "$resource_path/libgobject-2.0.0.dylib" "$resource_path/libgobject-2.0.dylib"
+
 dedupe_rpaths() {
   local mach_o="$1"
   local rpath
