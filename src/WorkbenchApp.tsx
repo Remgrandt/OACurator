@@ -6838,7 +6838,7 @@ function HelpPage({ page, onClose }: { page: "about" | "licensing"; onClose: () 
             <dl>
               <div>
                 <dt>Version</dt>
-                <dd>0.1.1 public beta</dd>
+                <dd>0.1.2 public beta</dd>
               </div>
               <div>
                 <dt>Publisher</dt>

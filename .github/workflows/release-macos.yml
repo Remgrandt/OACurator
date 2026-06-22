@@ -394,7 +394,7 @@ jobs:
           from pathlib import Path
 
           release_assets = Path("release-assets")
-          config = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8")) if Path("src-tauri/tauri.conf.json").exists() else {"version": "0.1.1"}
+          config = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8")) if Path("src-tauri/tauri.conf.json").exists() else {"version": "0.1.2"}
           existing_latest_path = Path(os.environ["EXISTING_LATEST_PATH"])
           if existing_latest_path.exists():
               latest = json.loads(existing_latest_path.read_text(encoding="utf-8"))
