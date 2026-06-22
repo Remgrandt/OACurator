@@ -33,7 +33,7 @@ concurrency:
 
 env:
   MACOSX_DEPLOYMENT_TARGET: "10.15"
-  MACOS_ARM64_DEPLOYMENT_TARGET: "11.0"
+  MACOS_ARM64_DEPLOYMENT_TARGET: "15.0"
 
 jobs:
   source-check:
@@ -94,11 +94,13 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: macos-26
+            runner: macos-15
             expected_file_arch: arm64
+            max_min_version: "15.0"
           - arch: x64
-            runner: macos-26-intel
+            runner: macos-15-intel
             expected_file_arch: x86_64
+            max_min_version: "10.15"
 
     steps:
       - name: Checkout
@@ -119,6 +121,10 @@ jobs:
           file "$libvips_dir/vips"
           file "$libvips_dir/vips" | grep -q "${{ matrix.expected_file_arch }}"
           "$libvips_dir/vips" --version
+          bash scripts/verify-macos-runtime-arch.sh \
+            "$libvips_dir" \
+            "${{ matrix.expected_file_arch }}" \
+            "${{ matrix.max_min_version }}"
 
           if find "$libvips_dir" -type f -perm -111 -print0 |
             xargs -0 otool -L |
@@ -149,7 +155,7 @@ jobs:
 
   macos-universal:
     name: Build signed and notarized universal macOS app
-    runs-on: macos-26
+    runs-on: macos-15
     needs: libvips-runtime
 
     env:

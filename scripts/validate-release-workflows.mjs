@@ -54,8 +54,37 @@ assertIncludes(
 );
 assertIncludes(
   macosRelease,
-  'MACOS_ARM64_DEPLOYMENT_TARGET: "11.0"',
+  'MACOS_ARM64_DEPLOYMENT_TARGET: "15.0"',
   'macOS Release Apple Silicon compatibility target',
+);
+assertIncludes(
+  macosRelease,
+  'runner: macos-15',
+  'macOS Release Apple Silicon runner',
+);
+assertIncludes(
+  macosRelease,
+  'runner: macos-15-intel',
+  'macOS Release Intel runner',
+);
+assertIncludes(
+  macosRelease,
+  'max_min_version: "10.15"',
+  'macOS Release Intel libvips compatibility guard',
+);
+assertIncludes(
+  macosRelease,
+  'max_min_version: "15.0"',
+  'macOS Release Apple Silicon libvips compatibility guard',
+);
+assertIncludes(
+  macosRelease,
+  'verify-macos-runtime-arch.sh',
+  'macOS Release per-architecture runtime compatibility verification',
+);
+assert(
+  !macosRelease.includes('macos-26'),
+  'macOS Release workflow must not use macOS 26 runners while preserving Catalina Intel compatibility.',
 );
 assertIncludes(
   macosRelease,
