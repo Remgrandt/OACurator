@@ -75,7 +75,7 @@ while IFS= read -r -d '' candidate; do
   fi
 
   mach_o_count=$((mach_o_count + 1))
-  lipo -verify_arch arm64 x86_64 "$candidate" >/dev/null
+  lipo "$candidate" -verify_arch arm64 x86_64 >/dev/null
 
   if [[ -n "$max_x64_min_version" || -n "$max_arm64_min_version" ]]; then
     for arch in arm64 x86_64; do

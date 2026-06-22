@@ -363,7 +363,7 @@ jobs:
             echo "::error::The app bundle does not contain the expected executable."
             exit 1
           fi
-          lipo -verify_arch arm64 x86_64 "$app_binary"
+          lipo "$app_binary" -verify_arch arm64 x86_64
           bash scripts/verify-macos-universal-runtime.sh "$app_bundle" "$MACOSX_DEPLOYMENT_TARGET" "$MACOS_ARM64_DEPLOYMENT_TARGET"
 
           libvips_dir="$app_bundle/Contents/Resources/resources/libvips"

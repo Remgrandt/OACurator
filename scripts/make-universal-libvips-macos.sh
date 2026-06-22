@@ -78,7 +78,7 @@ while IFS= read -r relative_path; do
       else
         chmod 644 "$output_file"
       fi
-      lipo -verify_arch arm64 x86_64 "$output_file" >/dev/null
+      lipo "$output_file" -verify_arch arm64 x86_64 >/dev/null
     elif ! cmp -s "$arm64_file" "$x64_file"; then
       echo "Keeping arm64 copy of differing non-Mach-O runtime file: $relative_path"
     fi
@@ -94,7 +94,7 @@ for required_tool in vips vipsheader; do
     echo "Universal libvips runtime is missing executable $required_tool." >&2
     exit 1
   fi
-  lipo -verify_arch arm64 x86_64 "$tool_path" >/dev/null
+  lipo "$tool_path" -verify_arch arm64 x86_64 >/dev/null
 done
 
 "$output_dir/vips" --version

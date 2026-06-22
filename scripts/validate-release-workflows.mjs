@@ -89,6 +89,11 @@ assertIncludes(
 );
 assertIncludes(
   macosRelease,
+  'lipo "$app_binary" -verify_arch arm64 x86_64',
+  'macOS Release universal app binary lipo verification',
+);
+assertIncludes(
+  macosRelease,
   'universal_updater_artifact',
   'macOS Release updater manifest generation',
 );
@@ -100,6 +105,16 @@ assert(
   !macosRelease.includes('platform_by_arch = {'),
   'macOS Release workflow must not publish split macOS updater artifacts by architecture.',
 );
+for (const [path, text] of [
+  ['release-macos.yml', macosRelease],
+  ['make-universal-libvips-macos.sh', readFileSync(join(root, 'scripts', 'make-universal-libvips-macos.sh'), 'utf8')],
+  ['verify-macos-universal-runtime.sh', readFileSync(join(root, 'scripts', 'verify-macos-universal-runtime.sh'), 'utf8')],
+]) {
+  assert(
+    !text.includes('lipo -verify_arch arm64 x86_64 "$'),
+    `${path} must pass the input file before -verify_arch for lipo compatibility.`,
+  );
+}
 
 assertIncludes(
   publishStagedRelease,
