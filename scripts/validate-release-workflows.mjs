@@ -59,6 +59,16 @@ assertIncludes(
 );
 assertIncludes(
   macosRelease,
+  'Install Linux Tauri dependencies',
+  'macOS Release source-check Linux dependency setup',
+);
+assertIncludes(
+  macosRelease,
+  'libwebkit2gtk-4.1-dev',
+  'macOS Release source-check Tauri WebKitGTK dependency',
+);
+assertIncludes(
+  macosRelease,
   'Make universal libvips runtime',
   'macOS Release universal runtime merge',
 );
