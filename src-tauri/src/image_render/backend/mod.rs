@@ -75,11 +75,6 @@ fn primary_vips_backend_name() -> &'static str {
     vips_linked::renderer_name()
 }
 
-#[cfg(all(test, not(any(target_os = "windows", target_os = "macos"))))]
-fn primary_vips_backend_name() -> &'static str {
-    "libvips-cli"
-}
-
 fn image_rs_fast_path_allowed(request: &RenderRequest, plan: &RenderPlan) -> bool {
     image_rs_fast_path_allowed_with_max(request, plan, image_rs_fast_path_max_bytes())
 }
