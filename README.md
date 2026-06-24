@@ -1,11 +1,7 @@
 <!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="public/oac-logo-dark-mode.svg">
-    <source media="(prefers-color-scheme: light)" srcset="public/oac-logo-light-mode.svg">
-    <img src="public/oac-logo-light-mode.svg" alt="OA Curator logo" width="128">
-  </picture>
+  <img src="docs/user/assets/oac-logo.svg" alt="OA Curator logo" width="220">
 </p>
 
 # OA Curator
