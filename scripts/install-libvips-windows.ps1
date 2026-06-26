@@ -52,6 +52,22 @@ if ($expectedHash -notmatch "^[a-f0-9]{64}$") {
   throw "Pinned Windows libvips SHA-256 is malformed."
 }
 
+function Get-Sha256Hex {
+  param([string] $Path)
+
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      return -join ($sha.ComputeHash($stream) | ForEach-Object { $_.ToString("x2") })
+    } finally {
+      $sha.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 $workRoot = Join-Path ([System.IO.Path]::GetTempPath()) "oac-libvips-$Version"
 $zipPath = Join-Path $workRoot $assetName
 $extractPath = Join-Path $workRoot "extract"
@@ -63,7 +79,7 @@ if (-not (Test-Path -LiteralPath $zipPath)) {
   Invoke-WebRequest -Uri $url -OutFile $zipPath
 }
 
-$actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+$actualHash = Get-Sha256Hex -Path $zipPath
 if ($actualHash -ne $expectedHash) {
   throw "libvips runtime SHA-256 mismatch for $assetName. Expected $expectedHash, got $actualHash."
 }
