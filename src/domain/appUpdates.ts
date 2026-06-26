@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 

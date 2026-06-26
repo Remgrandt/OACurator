@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Exporting Web Images
 
 Use PNG export to create web-ready image derivatives from attached source images.

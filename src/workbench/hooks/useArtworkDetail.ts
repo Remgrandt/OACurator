@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { useCallback, useState } from "react";
 import { emptyForm } from "../../domain/constants";
 import { formFromDetail } from "../../domain/formatters";

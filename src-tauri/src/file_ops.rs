@@ -1,6 +1,5 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{Catalog, FileAsset};
+use crate::path_safety::validate_file_name_component;
 use crate::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -69,16 +68,6 @@ pub fn plan_artwork_move(
             index,
             &mut planned_destinations,
         );
-        if let Some(parent) = destination.parent() {
-            if let Err(message) = validate_path_component(
-                parent
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(""),
-            ) {
-                issues.push(message);
-            }
-        }
         if destination.exists() && destination != asset.current_path {
             issues.push(format!(
                 "Destination already exists: {}",
@@ -196,38 +185,5 @@ fn destination_for_asset(
 }
 
 fn safe_component(value: &str) -> Result<String> {
-    let trimmed = value.trim();
-    validate_path_component(trimmed).map_err(AppError::Message)?;
-    let sanitized = sanitize_filename::sanitize(trimmed);
-    if sanitized.is_empty() {
-        return Err(AppError::Message(
-            "Path component is empty after sanitizing".to_string(),
-        ));
-    }
-    Ok(sanitized)
-}
-
-fn validate_path_component(value: &str) -> std::result::Result<(), String> {
-    if value.trim().is_empty() {
-        return Err("Path component cannot be empty".to_string());
-    }
-    if value.ends_with(' ') || value.ends_with('.') {
-        return Err(format!(
-            "Unsafe trailing character in path component: {value}"
-        ));
-    }
-    if value.chars().any(|ch| {
-        ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-    }) {
-        return Err(format!("Unsafe path character in component: {value}"));
-    }
-    let upper = value.to_ascii_uppercase();
-    let reserved = [
-        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
-    ];
-    if reserved.contains(&upper.as_str()) {
-        return Err(format!("Reserved Windows path component: {value}"));
-    }
-    Ok(())
+    validate_file_name_component(value)
 }

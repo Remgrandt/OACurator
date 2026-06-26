@@ -1,11 +1,10 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{
     art_type_id_for_label, artist_role_id_for_label, default_gallery_manifest_path,
     media_type_id_for_label, ArtistCreditUpdate, ArtworkSummary, Catalog, CollectionSummary,
     ImportedCafImageArtwork,
 };
-use crate::path_safety::unique_child_folder;
+use crate::csv_safety::spreadsheet_safe_cell;
+use crate::path_safety::{safe_path_component, unique_child_folder};
 use crate::{AppError, Result};
 use chrono::{NaiveDate, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -125,6 +124,7 @@ pub struct CafMissingArtworkReportRow {
 pub fn write_caf_missing_artwork_report(
     path: &Path,
     rows: &[CafMissingArtworkReportRow],
+    include_private_metadata: bool,
 ) -> Result<usize> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -132,7 +132,7 @@ pub fn write_caf_missing_artwork_report(
     let mut writer = csv::Writer::from_path(path).map_err(|error| {
         AppError::Message(format!("Could not create CAF missing report: {error}"))
     })?;
-    writer.write_record([
+    let mut headers = vec![
         "image_link",
         "title",
         "artists",
@@ -141,13 +141,18 @@ pub fn write_caf_missing_artwork_report(
         "for_sale",
         "added_to_caf",
         "description",
-        "purchase_date",
-        "purchase_price",
-        "estimated_value",
-        "personal_notes",
-    ])?;
+    ];
+    if include_private_metadata {
+        headers.extend([
+            "purchase_date",
+            "purchase_price",
+            "estimated_value",
+            "personal_notes",
+        ]);
+    }
+    writer.write_record(headers)?;
     for row in rows {
-        writer.write_record([
+        let mut record = vec![
             row.image_link.as_str(),
             row.title.as_str(),
             row.artists.as_str(),
@@ -156,11 +161,20 @@ pub fn write_caf_missing_artwork_report(
             row.for_sale.as_str(),
             row.added_to_caf.as_str(),
             row.description.as_str(),
-            row.purchase_date.as_str(),
-            row.purchase_price.as_str(),
-            row.estimated_value.as_str(),
-            row.personal_notes.as_str(),
-        ])?;
+        ];
+        if include_private_metadata {
+            record.extend([
+                row.purchase_date.as_str(),
+                row.purchase_price.as_str(),
+                row.estimated_value.as_str(),
+                row.personal_notes.as_str(),
+            ]);
+        }
+        let safe_record = record
+            .into_iter()
+            .map(spreadsheet_safe_cell)
+            .collect::<Vec<_>>();
+        writer.write_record(safe_record)?;
     }
     writer.flush()?;
     Ok(rows.len())
@@ -289,7 +303,7 @@ impl CafImportDebugLog {
         let csv_stem = csv_path
             .file_stem()
             .and_then(|value| value.to_str())
-            .map(safe_path_component)
+            .map(|value| safe_path_component(value, "caf-csv"))
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "caf-csv".to_string());
         let path = cache_dir
@@ -591,7 +605,7 @@ where
         let fallback_gallery_name = format!("CAF Gallery Room {gsub}");
         let gallery_folder = collection_folder
             .join("galleries")
-            .join(safe_path_component(&fallback_gallery_name));
+            .join(safe_path_component(&fallback_gallery_name, "CAF Import"));
         let gallery_manifest_path = default_gallery_manifest_path(&gallery_folder);
         let gallery = if let Some(gallery) = catalog.linked_caf_gallery_for_collection(
             collection.id,
@@ -1266,7 +1280,7 @@ fn file_name_from_url(url: &str) -> String {
         .and_then(|url| url.path_segments()?.next_back())
         .filter(|value| !value.is_empty())
         .unwrap_or("caf-image.jpg");
-    safe_path_component(raw)
+    safe_path_component(raw, "CAF Import")
 }
 
 fn is_positive_integer_text(value: &str) -> bool {
@@ -1315,27 +1329,105 @@ fn split_artist_name(name: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-fn safe_path_component(value: &str) -> String {
-    let cleaned = value
-        .chars()
-        .map(|character| {
-            if character.is_control()
-                || matches!(
-                    character,
-                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
-                )
-            {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    let cleaned = cleaned.trim_matches([' ', '.']).trim();
-    if cleaned.is_empty() {
-        "CAF Import".to_string()
-    } else {
-        cleaned.to_string()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn caf_missing_report_omits_private_collector_metadata_by_default() {
+        let dir = TempDir::new().unwrap();
+        let report_path = dir.path().join("caf-missing.csv");
+
+        write_caf_missing_artwork_report(&report_path, &[private_report_row()], false).unwrap();
+
+        let exported = fs::read_to_string(report_path).unwrap();
+        assert!(!exported.contains("purchase_date"));
+        assert!(!exported.contains("purchase_price"));
+        assert!(!exported.contains("estimated_value"));
+        assert!(!exported.contains("personal_notes"));
+        assert!(!exported.contains("2025-12-24"));
+        assert!(!exported.contains("$100"));
+        assert!(!exported.contains("$150"));
+        assert!(!exported.contains("Private note"));
+    }
+
+    #[test]
+    fn caf_missing_report_includes_private_collector_metadata_when_requested() {
+        let dir = TempDir::new().unwrap();
+        let report_path = dir.path().join("caf-missing.csv");
+
+        write_caf_missing_artwork_report(&report_path, &[private_report_row()], true).unwrap();
+
+        let exported = fs::read_to_string(report_path).unwrap();
+        assert!(exported.contains("purchase_date"));
+        assert!(exported.contains("purchase_price"));
+        assert!(exported.contains("estimated_value"));
+        assert!(exported.contains("personal_notes"));
+        assert!(exported.contains("2025-12-24"));
+        assert!(exported.contains("$100"));
+        assert!(exported.contains("$150"));
+        assert!(exported.contains("Private note"));
+    }
+
+    #[test]
+    fn caf_missing_report_neutralizes_spreadsheet_formula_cells() {
+        let dir = TempDir::new().unwrap();
+        let report_path = dir.path().join("caf-missing.csv");
+        let row = CafMissingArtworkReportRow {
+            image_link: "=HYPERLINK(\"https://evil.example\",\"image\")".to_string(),
+            title: "+Missing CAF Piece".to_string(),
+            artists: "-Jane Doe".to_string(),
+            media_type: "@Pen and Ink".to_string(),
+            art_type: "\tInterior Page".to_string(),
+            for_sale: "\rNFS".to_string(),
+            added_to_caf: "\n2025-06-06T10:33".to_string(),
+            description: "=Missing from CAF CSV".to_string(),
+            purchase_date: "+2025-12-24".to_string(),
+            purchase_price: "-100".to_string(),
+            estimated_value: "@SUM(1,2)".to_string(),
+            personal_notes: "\tPrivate note".to_string(),
+        };
+
+        write_caf_missing_artwork_report(&report_path, &[row], true).unwrap();
+
+        let mut reader = csv::Reader::from_path(&report_path).unwrap();
+        let records = reader
+            .records()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        let exported_row = &records[0];
+        assert_eq!(
+            exported_row.get(0),
+            Some("'=HYPERLINK(\"https://evil.example\",\"image\")")
+        );
+        assert_eq!(exported_row.get(1), Some("'+Missing CAF Piece"));
+        assert_eq!(exported_row.get(2), Some("'-Jane Doe"));
+        assert_eq!(exported_row.get(3), Some("'@Pen and Ink"));
+        assert_eq!(exported_row.get(4), Some("'\tInterior Page"));
+        assert_eq!(exported_row.get(5), Some("'\rNFS"));
+        assert_eq!(exported_row.get(6), Some("'\n2025-06-06T10:33"));
+        assert_eq!(exported_row.get(7), Some("'=Missing from CAF CSV"));
+        assert_eq!(exported_row.get(8), Some("'+2025-12-24"));
+        assert_eq!(exported_row.get(9), Some("'-100"));
+        assert_eq!(exported_row.get(10), Some("'@SUM(1,2)"));
+        assert_eq!(exported_row.get(11), Some("'\tPrivate note"));
+    }
+
+    fn private_report_row() -> CafMissingArtworkReportRow {
+        CafMissingArtworkReportRow {
+            image_link: "https://example.com/missing.jpg".to_string(),
+            title: "Missing CAF Piece".to_string(),
+            artists: "Jane Doe".to_string(),
+            media_type: "Pen and Ink".to_string(),
+            art_type: "Interior Page".to_string(),
+            for_sale: "NFS".to_string(),
+            added_to_caf: "2025-06-06T10:33".to_string(),
+            description: "Missing from CAF CSV".to_string(),
+            purchase_date: "2025-12-24".to_string(),
+            purchase_price: "$100".to_string(),
+            estimated_value: "$150".to_string(),
+            personal_notes: "Private note".to_string(),
+        }
     }
 }

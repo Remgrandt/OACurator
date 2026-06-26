@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use super::*;
 use crate::catalog::{CatalogConsistencyCheck, CatalogConsistencyReport, ManifestRepairReport};
 use crate::file_operations::{FileOperationRecoveryReport, FileOperationService};

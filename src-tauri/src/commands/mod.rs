@@ -16,22 +16,21 @@ use crate::catalog::{
 };
 use crate::export::{create_png_derivative, PngExportVariant};
 use crate::file_operations::FileOperationService;
-use crate::jobs::{JobCancellation, JobResult, JobService};
 use crate::oaa_archive::{
     export_oaa_archive_with_progress, import_oaa_archive_with_progress, OaaExportOptions,
     OaaExportReport, OaaImportOptions, OaaImportReport,
 };
+use crate::path_safety::expand_user_path;
 use crate::raremarq_export::{
     export_raremarq_csv_with_progress, raremarq_csv_export_plan, RaremarqCsvExportOptions,
     RaremarqCsvExportPlan, RaremarqCsvExportReport, RaremarqCsvExportScope, RaremarqCsvUrlMode,
 };
 use crate::scanner::{
     attach_files_to_artwork, ensure_artwork_cache_derivatives,
-    ensure_artwork_cache_derivatives_with_warnings,
-    generate_cache_derivatives_parallel_with_cancellation, preview_cache_work_items_for_collection,
-    register_thumbnail_cache_work_result, thumbnail_cache_work_items_for_collection,
-    thumbnail_cache_worker_count, AttachMode, CacheDerivativeOptions, ThumbnailCacheProgress,
-    ThumbnailCacheWorkItem,
+    ensure_artwork_cache_derivatives_with_warnings, generate_cache_derivatives_parallel,
+    preview_cache_work_items_for_collection, register_thumbnail_cache_work_result,
+    thumbnail_cache_work_items_for_collection, thumbnail_cache_worker_count, AttachMode,
+    CacheDerivativeOptions, ThumbnailCacheProgress, ThumbnailCacheWorkItem,
 };
 use crate::snikt_import::{
     import_snikt_csv_into_collection_public_with_progress, import_snikt_csv_public_with_progress,
@@ -47,7 +46,6 @@ mod cache;
 pub(crate) mod exports;
 pub(crate) mod images;
 pub(crate) mod imports;
-pub(crate) mod jobs;
 pub(crate) mod maintenance;
 pub(crate) mod preferences;
 pub(crate) mod workspace;
@@ -56,10 +54,10 @@ pub use artwork::*;
 pub use exports::*;
 pub use images::{
     cache_image_data_url_command, derived_asset_image_data_url_command,
-    file_asset_image_data_url_command, show_path_in_file_manager_command,
+    file_asset_image_data_url_command, open_external_url_command,
+    show_path_in_file_manager_command,
 };
 pub use imports::*;
-pub use jobs::*;
 pub use maintenance::*;
 pub use preferences::*;
 pub use workspace::*;
@@ -67,16 +65,11 @@ pub use workspace::*;
 pub struct AppState {
     pub catalog: Catalog,
     pub cache_dir: PathBuf,
-    pub jobs: JobService,
 }
 
 impl AppState {
     pub fn new(catalog: Catalog, cache_dir: PathBuf) -> Self {
-        Self {
-            catalog,
-            cache_dir,
-            jobs: JobService::default(),
-        }
+        Self { catalog, cache_dir }
     }
 }
 
@@ -216,6 +209,8 @@ pub struct ImportCafCsvRequest {
 pub struct WriteCafMissingReportRequest {
     pub path: String,
     pub rows: Vec<CafMissingArtworkReportRow>,
+    #[serde(default)]
+    pub include_private_metadata: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,7 +265,7 @@ fn default_include_oaa_images() -> bool {
 }
 
 fn default_include_private_metadata() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,4 +341,23 @@ pub struct ReorderFileAssetsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SniktUploadPrefillUrlRequest {
     pub artwork_id: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn export_oaa_archive_request_defaults_private_metadata_off() {
+        let request = serde_json::from_value::<ExportOaaArchiveRequest>(json!({
+            "collection_id": 7,
+            "archive_path": "collection.oaa"
+        }))
+        .unwrap();
+
+        assert!(request.include_images);
+        assert!(!request.include_private_metadata);
+        assert!(!request.allow_overwrite);
+    }
 }

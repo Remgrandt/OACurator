@@ -17,10 +17,9 @@ const lazyWorkbenchImporters = scripts.filter((name) =>
 
 if (workbenchChunks.length > 0 || lazyWorkbenchImporters.length > 0) {
   throw new Error(
-    `Release bundle lazy-loads WorkbenchApp: ${[
-      ...workbenchChunks,
-      ...lazyWorkbenchImporters,
-    ].join(", ")}`,
+    `Release bundle lazy-loads WorkbenchApp: ${[...workbenchChunks, ...lazyWorkbenchImporters].join(
+      ", ",
+    )}`,
   );
 }
 

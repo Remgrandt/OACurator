@@ -6,6 +6,7 @@ use crate::image_render::service::RenderRequest;
 use std::env;
 
 pub mod image_rs;
+mod old_jpeg_tiff;
 pub mod vips;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub mod vips_linked;
@@ -39,8 +40,78 @@ pub fn render(
         Err(RenderError::RendererUnavailable { .. }) if image_rs_fallback_allowed() => {
             image_rs::render(request, plan, image_rs::ImageRsMode::DebugFallback)
         }
-        Err(error) => Err(error),
+        Err(error) => render_old_jpeg_tiff_payload_fallback(request, plan, error),
     }
+}
+
+fn render_old_jpeg_tiff_payload_fallback(
+    request: &RenderRequest,
+    plan: &RenderPlan,
+    primary_error: RenderError,
+) -> std::result::Result<BackendRenderResult, RenderError> {
+    if !should_try_old_jpeg_tiff_payload_fallback(request, &primary_error) {
+        return Err(primary_error);
+    }
+    let Some(payload) = old_jpeg_tiff::extract_standalone_jpeg_payload(&request.source_path)?
+    else {
+        return Err(primary_error);
+    };
+    let fallback_request = RenderRequest {
+        source_path: payload.path().to_path_buf(),
+        destination_path: request.destination_path.clone(),
+        purpose: request.purpose,
+        recipe: request.recipe.clone(),
+        limits: request.limits,
+    };
+    let mut result =
+        render(&fallback_request, plan).map_err(|fallback_error| RenderError::DecodeFailed {
+            path: request.source_path.clone(),
+            detail: format!("old-style JPEG TIFF payload fallback failed: {fallback_error}"),
+        })?;
+    result.renderer = format!("{}+old-jpeg-tiff-payload", result.renderer);
+    result.renderer_options_json =
+        renderer_options_with_old_jpeg_tiff_fallback(&result.renderer_options_json, payload.path());
+    Ok(result)
+}
+
+fn should_try_old_jpeg_tiff_payload_fallback(request: &RenderRequest, error: &RenderError) -> bool {
+    request
+        .source_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "tif" | "tiff"))
+        && render_error_detail(error).is_some_and(is_old_jpeg_tiff_error_detail)
+}
+
+fn render_error_detail(error: &RenderError) -> Option<&str> {
+    match error {
+        RenderError::DecodeFailed { detail, .. }
+        | RenderError::EncodeFailed { detail, .. }
+        | RenderError::RendererUnavailable { detail, .. } => Some(detail),
+        _ => None,
+    }
+}
+
+fn is_old_jpeg_tiff_error_detail(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    detail.contains("old-style jpeg")
+        || detail.contains("requested compression method is not configured")
+}
+
+fn renderer_options_with_old_jpeg_tiff_fallback(
+    renderer_options_json: &str,
+    payload_path: &std::path::Path,
+) -> String {
+    let inner = serde_json::from_str::<serde_json::Value>(renderer_options_json)
+        .unwrap_or_else(|_| serde_json::Value::String(renderer_options_json.to_string()));
+    serde_json::json!({
+        "fallback": "old_jpeg_tiff_payload",
+        "source_container": "TIFF",
+        "payload_format": "JPEG",
+        "payload_extension": payload_path.extension().and_then(|value| value.to_str()),
+        "inner": inner
+    })
+    .to_string()
 }
 
 fn render_with_primary_vips_backend(
@@ -124,10 +195,15 @@ fn image_rs_fallback_allowed_from_value(value: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::image_metadata::read_image_metadata;
     use crate::image_render::recipe::basic_png_export_recipe;
     use crate::image_render::scheduler::RenderLimits;
     use crate::image_render::service::RenderPurpose;
+    use image::{ImageBuffer, Rgb};
+    use std::fs;
+    use std::io::Cursor;
     use std::path::PathBuf;
+    use tempfile::TempDir;
 
     fn request(path: &str) -> RenderRequest {
         RenderRequest {
@@ -146,6 +222,16 @@ mod tests {
             target_width: 1,
             target_height: 1,
             estimated_scheduler_weight_bytes: weight,
+        }
+    }
+
+    fn precise_plan(width: u32, height: u32) -> RenderPlan {
+        RenderPlan {
+            source_width: width,
+            source_height: height,
+            target_width: width,
+            target_height: height,
+            estimated_scheduler_weight_bytes: u64::from(width) * u64::from(height) * 8,
         }
     }
 
@@ -183,6 +269,129 @@ mod tests {
         assert!(image_rs_fallback_allowed_from_value(Some("1")));
         assert!(image_rs_fallback_allowed_from_value(Some("true")));
         assert!(image_rs_fallback_allowed_from_value(Some("yes")));
+    }
+
+    #[test]
+    fn old_jpeg_tiff_fallback_catches_lazy_encode_phase_decoder_errors() {
+        let request = request("scan.tif");
+        let error = RenderError::EncodeFailed {
+            path: PathBuf::from("out.png"),
+            detail: "pngsave: tiff2vips: Old-style JPEG compression support is not configured"
+                .to_string(),
+        };
+
+        assert!(should_try_old_jpeg_tiff_payload_fallback(&request, &error));
+    }
+
+    #[test]
+    fn old_jpeg_tiff_fallback_is_not_used_for_plain_write_errors() {
+        let request = request("scan.tif");
+        let error = RenderError::EncodeFailed {
+            path: PathBuf::from("out.png"),
+            detail: "access denied".to_string(),
+        };
+
+        assert!(!should_try_old_jpeg_tiff_payload_fallback(&request, &error));
+    }
+
+    #[test]
+    fn old_jpeg_tiff_payload_fallback_renders_extracted_jpeg() {
+        let dir = TempDir::new().unwrap();
+        let source_path = dir.path().join("old-style-jpeg.tif");
+        let destination_path = dir.path().join("out.png");
+        let jpeg = test_jpeg_bytes(16, 10);
+        write_old_style_jpeg_tiff_wrapper(&source_path, 16, 10, &jpeg);
+        let request = RenderRequest {
+            source_path: source_path.clone(),
+            destination_path: destination_path.clone(),
+            purpose: RenderPurpose::ExportBasicPng,
+            recipe: basic_png_export_recipe(),
+            limits: RenderLimits::default(),
+        };
+        let primary_error = RenderError::EncodeFailed {
+            path: destination_path.clone(),
+            detail: "pngsave: tiff2vips: Old-style JPEG compression support is not configured"
+                .to_string(),
+        };
+
+        let rendered =
+            render_old_jpeg_tiff_payload_fallback(&request, &precise_plan(16, 10), primary_error)
+                .unwrap();
+
+        assert_eq!(rendered.width, 16);
+        assert_eq!(rendered.height, 10);
+        assert_eq!(rendered.format, "png");
+        assert!(rendered.renderer.contains("old-jpeg-tiff-payload"));
+        assert!(destination_path.is_file());
+        let metadata = read_image_metadata(&destination_path).unwrap();
+        assert_eq!(metadata.width, 16);
+        assert_eq!(metadata.height, 10);
+    }
+
+    fn test_jpeg_bytes(width: u32, height: u32) -> Vec<u8> {
+        let image = ImageBuffer::from_fn(width, height, |x, y| {
+            Rgb([(x * 13) as u8, (y * 19) as u8, ((x + y) * 7) as u8])
+        });
+        let mut bytes = Cursor::new(Vec::new());
+        image
+            .write_to(&mut bytes, image::ImageFormat::Jpeg)
+            .unwrap();
+        bytes.into_inner()
+    }
+
+    fn write_old_style_jpeg_tiff_wrapper(
+        path: &std::path::Path,
+        width: u32,
+        height: u32,
+        jpeg: &[u8],
+    ) {
+        const SHORT: u16 = 3;
+        const LONG: u16 = 4;
+
+        let entry_count = 12u16;
+        let ifd_offset = 8u32;
+        let bits_offset = ifd_offset + 2 + u32::from(entry_count) * 12 + 4;
+        let jpeg_offset = bits_offset + 6;
+        let jpeg_length = u32::try_from(jpeg.len()).unwrap();
+        let mut bytes = Vec::new();
+
+        bytes.extend_from_slice(b"II");
+        bytes.extend_from_slice(&42u16.to_le_bytes());
+        bytes.extend_from_slice(&ifd_offset.to_le_bytes());
+        bytes.extend_from_slice(&entry_count.to_le_bytes());
+
+        write_ifd_entry(&mut bytes, 256, LONG, 1, width);
+        write_ifd_entry(&mut bytes, 257, LONG, 1, height);
+        write_ifd_entry(&mut bytes, 258, SHORT, 3, bits_offset);
+        write_ifd_entry(&mut bytes, 259, SHORT, 1, 6);
+        write_ifd_entry(&mut bytes, 262, SHORT, 1, 6);
+        write_ifd_entry(&mut bytes, 273, LONG, 1, jpeg_offset);
+        write_ifd_entry(&mut bytes, 277, SHORT, 1, 3);
+        write_ifd_entry(&mut bytes, 278, LONG, 1, height);
+        write_ifd_entry(&mut bytes, 279, LONG, 1, jpeg_length);
+        write_ifd_entry(&mut bytes, 284, SHORT, 1, 1);
+        write_ifd_entry(&mut bytes, 513, LONG, 1, jpeg_offset);
+        write_ifd_entry(&mut bytes, 514, LONG, 1, jpeg_length);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        for bits in [8u16, 8, 8] {
+            bytes.extend_from_slice(&bits.to_le_bytes());
+        }
+        bytes.extend_from_slice(jpeg);
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn write_ifd_entry(bytes: &mut Vec<u8>, tag: u16, kind: u16, count: u32, value: u32) {
+        bytes.extend_from_slice(&tag.to_le_bytes());
+        bytes.extend_from_slice(&kind.to_le_bytes());
+        bytes.extend_from_slice(&count.to_le_bytes());
+        if kind == 3 && count == 1 {
+            let value = u16::try_from(value).unwrap();
+            bytes.extend_from_slice(&value.to_le_bytes());
+            bytes.extend_from_slice(&0u16.to_le_bytes());
+        } else {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
     }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]

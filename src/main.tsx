@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

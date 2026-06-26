@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Exporting Artwork
 
 OA Curator separates original scan files from export derivatives.

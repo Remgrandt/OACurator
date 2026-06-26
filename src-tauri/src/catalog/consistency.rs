@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use super::{Catalog, ManifestProjectionIssue};
 use crate::Result;
 use serde::{Deserialize, Serialize};

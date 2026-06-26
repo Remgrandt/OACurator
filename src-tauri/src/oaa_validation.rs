@@ -1,5 +1,4 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
+use crate::path_safety::is_safe_archive_path_component;
 use crate::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -418,7 +417,7 @@ fn validate_archive_path_with_rule(
     }
     if path
         .split('/')
-        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        .any(|segment| !is_safe_archive_path_component(segment))
     {
         safe = false;
     }

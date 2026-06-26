@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { useCallback, useEffect, useState } from "react";
 import { carouselItemsForDetail } from "../../domain/formatters";
 import type { ArtworkDetail, ImageDataUrlSource } from "../../domain/types";

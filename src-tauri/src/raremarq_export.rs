@@ -1,6 +1,5 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{ArtworkDetail, Catalog, FileAsset};
+use crate::csv_safety::spreadsheet_safe_cell;
 use crate::export_policy::ExportPolicy;
 use crate::image_render::{
     raremarq_upload_jpeg_recipe, render_image_to_file, RenderLimits, RenderPurpose, RenderRequest,
@@ -99,6 +98,7 @@ pub struct RaremarqCsvExportPlanScope {
     pub blank_url_count: usize,
     pub tmpfiles_upload_count: usize,
     pub tmpfiles_missing_file_count: usize,
+    pub tmpfiles_unrenderable_file_count: usize,
     pub tmpfiles_large_file_count: usize,
 }
 
@@ -436,18 +436,25 @@ fn plan_scope(artworks: &[ArtworkDetail]) -> RaremarqCsvExportPlanScope {
         blank_url_count: artworks.len(),
         tmpfiles_upload_count: artworks
             .iter()
-            .filter(|detail| !detail.file_assets.is_empty())
+            .filter(|detail| uploadable_primary_file(detail).is_some())
             .count(),
         tmpfiles_missing_file_count: artworks
             .iter()
             .filter(|detail| detail.file_assets.is_empty())
             .count(),
-        tmpfiles_large_file_count: artworks
+        tmpfiles_unrenderable_file_count: artworks
             .iter()
             .filter(|detail| {
                 detail
                     .file_assets
                     .first()
+                    .is_some_and(|file_asset| !is_raremarq_uploadable_file_asset(file_asset))
+            })
+            .count(),
+        tmpfiles_large_file_count: artworks
+            .iter()
+            .filter(|detail| {
+                uploadable_primary_file(detail)
                     .map(|file_asset| file_asset.size_bytes > RAREMARQ_MAX_UPLOAD_BYTES as i64)
                     .unwrap_or(false)
             })
@@ -476,6 +483,9 @@ where
             let Some(file_asset) = detail.file_assets.first() else {
                 return Ok(None);
             };
+            if !is_raremarq_uploadable_file_asset(file_asset) {
+                return Ok(None);
+            }
             let Some(tmp_dir) = tmp_dir else {
                 return Err(AppError::Message(
                     "Temporary upload staging folder was not initialized".to_string(),
@@ -486,7 +496,11 @@ where
                     "Temporary upload client was not initialized".to_string(),
                 ));
             };
-            let (staged_path, resized) = stage_upload_file(file_asset, tmp_dir, index)?;
+            let (staged_path, resized) = match stage_upload_file(file_asset, tmp_dir, index) {
+                Ok(staged) => staged,
+                Err(error) if is_render_staging_failure(&error) => return Ok(None),
+                Err(error) => return Err(error),
+            };
             let verb = if resized {
                 "Uploading downsized"
             } else {
@@ -512,6 +526,22 @@ where
     }
 }
 
+fn uploadable_primary_file(detail: &ArtworkDetail) -> Option<&FileAsset> {
+    detail
+        .file_assets
+        .first()
+        .filter(|file_asset| is_raremarq_uploadable_file_asset(file_asset))
+}
+
+fn is_raremarq_uploadable_file_asset(file_asset: &FileAsset) -> bool {
+    file_asset.width.is_some()
+        && file_asset.height.is_some()
+        && matches!(
+            normalized_file_asset_extension(file_asset).as_deref(),
+            Some("jpg" | "jpeg" | "png" | "tif" | "tiff")
+        )
+}
+
 fn stage_upload_file(
     file_asset: &FileAsset,
     tmp_dir: &Path,
@@ -520,23 +550,26 @@ fn stage_upload_file(
     let source = &file_asset.current_path;
     let source_size = fs::metadata(source)?.len();
     let resized = source_size > RAREMARQ_MAX_UPLOAD_BYTES;
-    let extension = if resized {
-        "jpg".to_string()
-    } else {
-        source
-            .extension()
-            .and_then(|value| value.to_str())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("bin")
-            .to_ascii_lowercase()
-    };
-    let staged_path = tmp_dir.join(obfuscated_file_name(source, index, &extension));
-    if resized {
-        write_downsized_jpeg(source, &staged_path)?;
-    } else {
-        fs::copy(source, &staged_path)?;
-    }
+    let staged_path = tmp_dir.join(obfuscated_file_name(source, index, "jpg"));
+    write_downsized_jpeg(source, &staged_path)?;
     Ok((staged_path, resized))
+}
+
+fn normalized_file_asset_extension(file_asset: &FileAsset) -> Option<String> {
+    file_asset
+        .current_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .or_else(|| {
+            let value = file_asset.extension.trim();
+            (!value.is_empty()).then_some(value)
+        })
+        .map(|value| value.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn is_render_staging_failure(error: &AppError) -> bool {
+    matches!(error, AppError::Render(_))
 }
 
 fn write_downsized_jpeg(source: &Path, target: &Path) -> Result<()> {
@@ -666,7 +699,7 @@ fn tmpfiles_direct_download_url(value: &str) -> Option<String> {
 
 fn raremarq_row(detail: &ArtworkDetail, primary_image_url: Option<&str>) -> Vec<String> {
     let for_sale = raremarq_for_sale(detail);
-    vec![
+    let row = vec![
         detail.title.clone(),
         primary_image_url.unwrap_or("").to_string(),
         raremarq_category(detail).to_string(),
@@ -695,7 +728,8 @@ fn raremarq_row(detail: &ArtworkDetail, primary_image_url: Option<&str>) -> Vec<
         },
         String::new(),
         String::new(),
-    ]
+    ];
+    row.into_iter().map(spreadsheet_safe_cell).collect()
 }
 
 fn missing_url_message(detail: &ArtworkDetail, url_mode: RaremarqCsvUrlMode) -> String {
@@ -708,10 +742,20 @@ fn missing_url_message(detail: &ArtworkDetail, url_mode: RaremarqCsvUrlMode) -> 
             "Artwork \"{}\" has blank URL by export option; Raremarq bulk upload requires one.",
             detail.title
         ),
-        RaremarqCsvUrlMode::Tmpfiles => format!(
-            "Artwork \"{}\" has no primary file to upload; Raremarq bulk upload requires one.",
-            detail.title
-        ),
+        RaremarqCsvUrlMode::Tmpfiles => match detail.file_assets.first() {
+            None => format!(
+                "Artwork \"{}\" has no primary file to upload; Raremarq bulk upload requires one.",
+                detail.title
+            ),
+            Some(file_asset) if !is_raremarq_uploadable_file_asset(file_asset) => format!(
+                "Artwork \"{}\" has a primary file that is not a supported image for temporary upload.",
+                detail.title
+            ),
+            Some(_) => format!(
+                "Artwork \"{}\" has a primary image that could not be rendered for temporary upload.",
+                detail.title
+            ),
+        },
     }
 }
 
@@ -820,6 +864,8 @@ impl From<csv::Error> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
+    use tempfile::TempDir;
 
     #[test]
     fn tmpfiles_direct_download_url_uses_dl_route_for_api_result() {
@@ -827,5 +873,359 @@ mod tests {
             tmpfiles_direct_download_url("https://tmpfiles.org/123/example.jpg").as_deref(),
             Some("https://tmpfiles.org/dl/123/example.jpg")
         );
+    }
+
+    #[test]
+    fn plan_scope_does_not_count_unrenderable_primary_file_as_tmpfiles_upload() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("supporting-document.pdf");
+        fs::write(&source, b"not an image").unwrap();
+        let detail = test_artwork_detail(
+            "Reference Document",
+            vec![test_file_asset(&source, "pdf", None, None)],
+        );
+
+        let scope = plan_scope(&[detail]);
+
+        assert_eq!(scope.tmpfiles_upload_count, 0);
+        assert_eq!(scope.tmpfiles_missing_file_count, 0);
+        assert_eq!(scope.tmpfiles_unrenderable_file_count, 1);
+    }
+
+    #[test]
+    fn tmpfiles_primary_url_skips_unrenderable_primary_file_without_uploading() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("supporting-document.pdf");
+        fs::write(&source, b"not an image").unwrap();
+        let detail = test_artwork_detail(
+            "Reference Document",
+            vec![test_file_asset(&source, "pdf", None, None)],
+        );
+        let uploader = RecordingUploader::default();
+        let mut progress = |_| {};
+
+        let result = primary_image_url_for_detail(
+            &detail,
+            RaremarqCsvUrlMode::Tmpfiles,
+            Some(dir.path()),
+            Some(&uploader),
+            0,
+            1,
+            &mut progress,
+        )
+        .unwrap();
+
+        assert!(result.is_none());
+        assert_eq!(uploader.uploads.get(), 0);
+    }
+
+    #[test]
+    fn tmpfiles_primary_url_skips_tiff_that_cannot_be_rendered_without_uploading() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("broken-scan.tif");
+        fs::write(&source, b"not a real tiff").unwrap();
+        let detail = test_artwork_detail(
+            "Broken TIFF",
+            vec![test_file_asset(&source, "tif", Some(100), Some(100))],
+        );
+        let uploader = RecordingUploader::default();
+        let mut progress = |_| {};
+
+        let result = primary_image_url_for_detail(
+            &detail,
+            RaremarqCsvUrlMode::Tmpfiles,
+            Some(dir.path()),
+            Some(&uploader),
+            0,
+            1,
+            &mut progress,
+        )
+        .unwrap();
+
+        assert!(result.is_none());
+        assert_eq!(uploader.uploads.get(), 0);
+    }
+
+    #[test]
+    fn tmpfiles_export_warns_when_primary_file_is_not_a_supported_image() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("supporting-document.pdf");
+        fs::write(&source, b"not an image").unwrap();
+        let (catalog, collection_id) =
+            catalog_with_artwork_file(&dir, "Reference Document", &source, None, None);
+        let uploader = RecordingUploader::default();
+        let mut progress = |_| {};
+
+        let report = export_raremarq_csv_internal(
+            &catalog,
+            RaremarqCsvExportOptions {
+                collection_id,
+                csv_path: dir.path().join("raremarq.csv"),
+                scope: RaremarqCsvExportScope::All,
+                url_mode: RaremarqCsvUrlMode::Tmpfiles,
+                allow_overwrite: false,
+                confirmed_temporary_upload: true,
+            },
+            &mut progress,
+            Some(&uploader),
+        )
+        .unwrap();
+
+        assert_eq!(report.tmpfiles_uploaded, 0);
+        assert_eq!(report.rows_missing_primary_image_url, 1);
+        assert_eq!(uploader.uploads.get(), 0);
+        assert!(report.messages.iter().any(|message| {
+            message.contains("Reference Document") && message.contains("not a supported image")
+        }));
+    }
+
+    #[test]
+    fn tmpfiles_export_warns_when_primary_image_cannot_be_rendered() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("broken-scan.tif");
+        fs::write(&source, b"not a real tiff").unwrap();
+        let (catalog, collection_id) =
+            catalog_with_artwork_file(&dir, "Broken TIFF", &source, Some(100), Some(100));
+        let uploader = RecordingUploader::default();
+        let mut progress = |_| {};
+
+        let report = export_raremarq_csv_internal(
+            &catalog,
+            RaremarqCsvExportOptions {
+                collection_id,
+                csv_path: dir.path().join("raremarq.csv"),
+                scope: RaremarqCsvExportScope::All,
+                url_mode: RaremarqCsvUrlMode::Tmpfiles,
+                allow_overwrite: false,
+                confirmed_temporary_upload: true,
+            },
+            &mut progress,
+            Some(&uploader),
+        )
+        .unwrap();
+
+        assert_eq!(report.tmpfiles_uploaded, 0);
+        assert_eq!(report.rows_missing_primary_image_url, 1);
+        assert_eq!(uploader.uploads.get(), 0);
+        assert!(report.messages.iter().any(|message| {
+            message.contains("Broken TIFF") && message.contains("could not be rendered")
+        }));
+    }
+
+    #[test]
+    fn tmpfiles_export_renders_small_primary_image_before_uploading() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("small-scan.png");
+        write_test_png(&source);
+        let (catalog, collection_id) =
+            catalog_with_artwork_file(&dir, "Small PNG", &source, Some(1), Some(1));
+        let uploader = RecordingUploader::default();
+        let mut progress = |_| {};
+
+        let report = export_raremarq_csv_internal(
+            &catalog,
+            RaremarqCsvExportOptions {
+                collection_id,
+                csv_path: dir.path().join("raremarq.csv"),
+                scope: RaremarqCsvExportScope::All,
+                url_mode: RaremarqCsvUrlMode::Tmpfiles,
+                allow_overwrite: false,
+                confirmed_temporary_upload: true,
+            },
+            &mut progress,
+            Some(&uploader),
+        )
+        .unwrap();
+
+        assert_eq!(report.tmpfiles_uploaded, 1);
+        assert_eq!(uploader.uploads.get(), 1);
+        assert_eq!(
+            uploader.staged_extensions.borrow().clone(),
+            vec!["jpg".to_string()]
+        );
+        let staged_bytes = uploader.staged_bytes.borrow();
+        assert_eq!(&staged_bytes[0][..3], &[0xff, 0xd8, 0xff]);
+    }
+
+    #[test]
+    fn tmpfiles_export_rejects_stale_image_metadata_when_current_file_is_not_renderable() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("stale-scan.jpg");
+        fs::write(&source, b"%PDF-1.7 not an image").unwrap();
+        let (catalog, collection_id) =
+            catalog_with_artwork_file(&dir, "Stale JPEG", &source, Some(100), Some(100));
+        let uploader = RecordingUploader::default();
+        let mut progress = |_| {};
+
+        let report = export_raremarq_csv_internal(
+            &catalog,
+            RaremarqCsvExportOptions {
+                collection_id,
+                csv_path: dir.path().join("raremarq.csv"),
+                scope: RaremarqCsvExportScope::All,
+                url_mode: RaremarqCsvUrlMode::Tmpfiles,
+                allow_overwrite: false,
+                confirmed_temporary_upload: true,
+            },
+            &mut progress,
+            Some(&uploader),
+        )
+        .unwrap();
+
+        assert_eq!(report.tmpfiles_uploaded, 0);
+        assert_eq!(report.rows_missing_primary_image_url, 1);
+        assert_eq!(uploader.uploads.get(), 0);
+        assert!(report.messages.iter().any(|message| {
+            message.contains("Stale JPEG") && message.contains("could not be rendered")
+        }));
+    }
+
+    fn catalog_with_artwork_file(
+        dir: &TempDir,
+        title: &str,
+        source: &Path,
+        width: Option<i64>,
+        height: Option<i64>,
+    ) -> (Catalog, i64) {
+        let catalog = Catalog::open(dir.path().join("catalog.sqlite")).unwrap();
+        catalog.init().unwrap();
+        let collection = catalog
+            .create_collection("Manual", &dir.path().join("Manual/.oacollection"))
+            .unwrap();
+        let gallery = catalog
+            .create_gallery(
+                "Manual Gallery",
+                &dir.path().join("Manual/galleries/Manual/.oagallery"),
+            )
+            .unwrap();
+        catalog
+            .link_gallery_to_collection(collection.id, gallery.id)
+            .unwrap();
+        let artwork = catalog
+            .create_artwork_in_gallery(gallery.id, title, None)
+            .unwrap();
+        catalog
+            .upsert_file_asset_with_known_metadata(
+                artwork.id,
+                crate::catalog::FileAssetKnownMetadataInsert {
+                    original_path: source,
+                    root: dir.path(),
+                    path: source,
+                    is_primary: true,
+                    source_kind: "imported",
+                    metadata: crate::catalog::FileAssetMetadata {
+                        width,
+                        height,
+                        dpi_x: None,
+                        dpi_y: None,
+                    },
+                },
+            )
+            .unwrap();
+        (catalog, collection.id)
+    }
+
+    fn write_test_png(path: &Path) {
+        const ONE_BY_ONE_PNG: &[u8] = &[
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+            8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31,
+            0, 3, 3, 2, 0, 239, 191, 167, 219, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ];
+        fs::write(path, ONE_BY_ONE_PNG).unwrap();
+    }
+
+    #[derive(Default)]
+    struct RecordingUploader {
+        uploads: Cell<usize>,
+        staged_extensions: RefCell<Vec<String>>,
+        staged_bytes: RefCell<Vec<Vec<u8>>>,
+    }
+
+    impl TemporaryImageUploader for RecordingUploader {
+        fn upload(&self, staged_path: &Path) -> Result<String> {
+            self.uploads.set(self.uploads.get() + 1);
+            self.staged_extensions.borrow_mut().push(
+                staged_path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            );
+            self.staged_bytes.borrow_mut().push(fs::read(staged_path)?);
+            Ok("https://tmpfiles.org/dl/test-image.jpg".to_string())
+        }
+    }
+
+    fn test_artwork_detail(title: &str, file_assets: Vec<FileAsset>) -> ArtworkDetail {
+        ArtworkDetail {
+            id: 1,
+            canonical_id: "OAC-00001".to_string(),
+            display_id: "OAC-00001".to_string(),
+            caf_artwork_id: None,
+            snikt_artwork_id: None,
+            raremarq_artwork_id: None,
+            title: title.to_string(),
+            description: None,
+            for_sale_status: None,
+            media_type_id: None,
+            media: None,
+            art_type_id: None,
+            format: None,
+            publication_status_id: None,
+            active: true,
+            illustration_exchange: false,
+            ix_for_sale: false,
+            caf_url: None,
+            snikt_url: None,
+            raremarq_url: None,
+            generic_url: None,
+            caf_csv_image_link: None,
+            caf_csv_added_to_caf: None,
+            snikt_csv_created_date: None,
+            snikt_metadata: crate::catalog::SniktMetadata::default(),
+            purchase_price: None,
+            estimated_value: None,
+            purchase_date: None,
+            provenance: None,
+            personal_notes: None,
+            source_folder: PathBuf::new(),
+            artist_credits: Vec::new(),
+            file_assets,
+            derived_assets: Vec::new(),
+            cache_warnings: Vec::new(),
+        }
+    }
+
+    fn test_file_asset(
+        source: &Path,
+        extension: &str,
+        width: Option<i64>,
+        height: Option<i64>,
+    ) -> FileAsset {
+        FileAsset {
+            id: 1,
+            artwork_id: 1,
+            original_path: source.to_path_buf(),
+            current_path: source.to_path_buf(),
+            relative_path: source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            file_name: source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            extension: extension.to_string(),
+            size_bytes: fs::metadata(source).unwrap().len() as i64,
+            width,
+            height,
+            dpi_x: None,
+            dpi_y: None,
+            image_role: None,
+            source_kind: "imported".to_string(),
+            is_primary: true,
+        }
     }
 }

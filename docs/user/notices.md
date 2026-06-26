@@ -1,7 +1,5 @@
 # Notices
 
-Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 OA Curator uses third-party libraries and visual resources. Project attribution notes for bundled visual, theme, and UI resources are distributed with the project as `ATTRIBUTIONS.md`.
 
 ## Notices Summary

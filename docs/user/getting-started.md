@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Getting Started
 
 This page walks through a basic OA Curator workflow from an empty workspace to a cataloged artwork with an export derivative.

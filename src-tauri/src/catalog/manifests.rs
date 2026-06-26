@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use super::{
     artwork_manifest_from_detail, merge_manifest_only_entries, AppError, ArtworkManifest, Catalog,
     Result,

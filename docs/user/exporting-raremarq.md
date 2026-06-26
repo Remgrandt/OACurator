@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Exporting To Raremarq
 
 Raremarq offers a bulk upload workflow:

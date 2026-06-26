@@ -1,11 +1,9 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{Catalog, DerivedAsset, DerivedAssetInsert, DerivedAssetRenderInsert};
-use crate::file_ops::PlanStatus;
 use crate::image_render::{
     basic_png_export_recipe, premium_png_export_recipe, render_image_to_file, RenderLimits,
     RenderPurpose, RenderRequest, RenderedImage,
 };
+use crate::path_safety::safe_path_component;
 use crate::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -101,12 +99,7 @@ fn is_renderable_png_export_source(extension: &str) -> bool {
 }
 
 fn unique_export_path(folder: &Path, canonical_id: &str, title: &str) -> PathBuf {
-    let safe_title = sanitize_filename::sanitize(title.trim());
-    let safe_title = if safe_title.is_empty() {
-        "Untitled Artwork".to_string()
-    } else {
-        safe_title
-    };
+    let safe_title = safe_path_component(title, "Untitled Artwork");
     let base = format!("{canonical_id} - {safe_title}");
     let mut candidate = folder.join(format!("{base}.png"));
     let mut index = 2;
@@ -139,9 +132,4 @@ fn render_metadata_insert(
         renderer_version: rendered.renderer_version.clone(),
         renderer_options_json: rendered.renderer_options_json.clone(),
     }
-}
-
-#[allow(dead_code)]
-fn _plan_status_used(status: PlanStatus) -> PlanStatus {
-    status
 }

@@ -1,6 +1,5 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use super::*;
+use crate::diagnostics::{png_export_error, write_diagnostic_log, DiagnosticOperation};
 
 #[tauri::command]
 pub async fn export_oaa_archive_command(
@@ -17,7 +16,7 @@ pub async fn export_oaa_archive_command(
             &catalog,
             OaaExportOptions {
                 collection_id: request.collection_id,
-                archive_path: PathBuf::from(request.archive_path),
+                archive_path: expand_user_path(&request.archive_path),
                 include_images: request.include_images,
                 include_private_metadata: request.include_private_metadata,
                 allow_overwrite: request.allow_overwrite,
@@ -36,7 +35,7 @@ pub fn destination_file_exists_command(path: String) -> std::result::Result<bool
     if path.is_empty() {
         return Ok(false);
     }
-    Ok(Path::new(path).is_file())
+    Ok(expand_user_path(path).is_file())
 }
 
 #[tauri::command]
@@ -67,7 +66,7 @@ pub async fn export_raremarq_csv_command(
             &catalog,
             RaremarqCsvExportOptions {
                 collection_id: request.collection_id,
-                csv_path: PathBuf::from(request.csv_path),
+                csv_path: expand_user_path(&request.csv_path),
                 scope: request.scope,
                 url_mode: request.url_mode,
                 allow_overwrite: request.allow_overwrite,
@@ -90,7 +89,8 @@ pub async fn create_png_derivative_command(
     variant: PngExportVariant,
 ) -> std::result::Result<DerivedAsset, String> {
     let catalog = state.catalog.clone();
-    let export_root = PathBuf::from(export_root);
+    let cache_dir = state.cache_dir.clone();
+    let export_root = expand_user_path(&export_root);
     tauri::async_runtime::spawn_blocking(move || {
         create_png_derivative(
             &catalog,
@@ -99,7 +99,16 @@ pub async fn create_png_derivative_command(
             &export_root,
             variant,
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| {
+            let presentation = png_export_error(&error);
+            let _ = write_diagnostic_log(
+                &cache_dir,
+                DiagnosticOperation::PngExport,
+                Some(&export_root),
+                &presentation,
+            );
+            presentation.message
+        })
     })
     .await
     .map_err(|error| error.to_string())?

@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use super::cache::start_thumbnail_cache_generation;
 use super::*;
 
@@ -14,7 +12,7 @@ fn required_import_destination_root(
                 "Destination folder is required when importing a new Collection".to_string(),
             )
         })?;
-    Ok(PathBuf::from(destination_root))
+    Ok(expand_user_path(&destination_root))
 }
 
 #[tauri::command]
@@ -25,7 +23,7 @@ pub async fn import_caf_csv_command(
 ) -> std::result::Result<CafImportReport, String> {
     let catalog = state.catalog.clone();
     let cache_dir = state.cache_dir.clone();
-    let csv_path = PathBuf::from(request.csv_path);
+    let csv_path = expand_user_path(&request.csv_path);
     let destination_root = request.destination_root;
     let target_collection_id = request.target_collection_id;
     let allow_caf_collection_id_override = request.allow_caf_collection_id_override;
@@ -64,8 +62,12 @@ pub async fn write_caf_missing_report_command(
     request: WriteCafMissingReportRequest,
 ) -> std::result::Result<usize, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        write_caf_missing_artwork_report(Path::new(&request.path), &request.rows)
-            .map_err(|error| error.to_string())
+        write_caf_missing_artwork_report(
+            &expand_user_path(&request.path),
+            &request.rows,
+            request.include_private_metadata,
+        )
+        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("CAF missing report task failed: {error}"))?
@@ -117,8 +119,8 @@ pub async fn import_oaa_archive_command(
         import_oaa_archive_with_progress(
             &import_catalog,
             OaaImportOptions {
-                archive_path: PathBuf::from(request.archive_path),
-                destination_root: request.destination_root.map(PathBuf::from),
+                archive_path: expand_user_path(&request.archive_path),
+                destination_root: request.destination_root.map(|path| expand_user_path(&path)),
                 target_collection_id: request.target_collection_id,
                 cache_dir: import_cache_dir,
             },
@@ -128,13 +130,7 @@ pub async fn import_oaa_archive_command(
     })
     .await
     .map_err(|error| format!("OAA import task failed: {error}"))??;
-    start_thumbnail_cache_generation(
-        app,
-        catalog,
-        cache_dir,
-        state.jobs.clone(),
-        report.collection_id,
-    );
+    start_thumbnail_cache_generation(app, catalog, cache_dir, report.collection_id);
     Ok(report)
 }
 
@@ -145,7 +141,7 @@ pub async fn import_snikt_collection_command(
     request: ImportSniktCollectionRequest,
 ) -> std::result::Result<SniktImportReport, String> {
     let catalog = state.catalog.clone();
-    let csv_path = PathBuf::from(request.csv_path);
+    let csv_path = expand_user_path(&request.csv_path);
     let destination_root = request.destination_root;
     let target_collection_id = request.target_collection_id;
     tauri::async_runtime::spawn_blocking(move || {

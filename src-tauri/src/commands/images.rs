@@ -4,6 +4,10 @@ use super::AppState;
 use base64::Engine;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tauri_plugin_opener::OpenerExt;
+use url::Url;
+
+const EXTERNAL_BROWSER_URL_ERROR: &str = "Only http:// and https:// links can be opened.";
 
 #[tauri::command]
 pub fn show_path_in_file_manager_command(path: String) -> std::result::Result<(), String> {
@@ -50,6 +54,26 @@ pub fn show_path_in_file_manager_command(path: String) -> std::result::Result<()
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_external_url_command<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    url: String,
+) -> std::result::Result<(), String> {
+    let url = validated_external_browser_url(&url)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+fn validated_external_browser_url(url: &str) -> std::result::Result<String, String> {
+    let trimmed = url.trim();
+    let parsed = Url::parse(trimmed).map_err(|_| EXTERNAL_BROWSER_URL_ERROR.to_string())?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(trimmed.to_string()),
+        _ => Err(EXTERNAL_BROWSER_URL_ERROR.to_string()),
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -188,6 +212,35 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("too large to preview"));
+    }
+
+    #[test]
+    fn external_url_policy_accepts_only_http_and_https() {
+        assert_eq!(
+            super::validated_external_browser_url("https://example.com/art").as_deref(),
+            Ok("https://example.com/art")
+        );
+        assert_eq!(
+            super::validated_external_browser_url(" http://example.com/art ").as_deref(),
+            Ok("http://example.com/art")
+        );
+
+        for url in [
+            "mailto:collector@example.com",
+            "file:///C:/Users/grant/secret.txt",
+            "javascript:alert(1)",
+            "data:text/html;base64,PGgxPkJvb208L2gxPg==",
+            "ms-settings:privacy",
+            "not a url",
+            "",
+        ] {
+            let result = super::validated_external_browser_url(url);
+            assert!(result.is_err(), "{url} should not be launchable");
+            assert_eq!(
+                result.unwrap_err(),
+                "Only http:// and https:// links can be opened."
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]

@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import type { ChangeEvent, ReactNode } from "react";
 import type { CarouselImageItem, PngExportVariant } from "../domain/types";
 import { formatDimensions, formatDpi, formatImageFormat } from "../domain/formatters";

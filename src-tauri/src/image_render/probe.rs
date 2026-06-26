@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::FileAssetMetadata;
 use crate::image_metadata::read_image_metadata;
 use serde::{Deserialize, Serialize};

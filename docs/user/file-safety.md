@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # File Safety
 
 OA Curator is built around the assumption that original art scans are valuable source files.

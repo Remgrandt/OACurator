@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::image_render::error::RenderError;
 use crate::image_render::recipe::ResizeMode;
 use crate::image_render::service::RenderRequest;

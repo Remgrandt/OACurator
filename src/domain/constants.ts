@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import type { DetailForm } from "./types";
 
 export const ARTIST_ROLE_OPTIONS = [

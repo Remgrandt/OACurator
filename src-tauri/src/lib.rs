@@ -3,13 +3,14 @@
 pub mod caf_import;
 pub mod catalog;
 pub mod commands;
+pub mod csv_safety;
+pub mod diagnostics;
 pub mod export;
 pub mod export_policy;
 pub mod file_operations;
 pub mod file_ops;
 pub mod image_metadata;
 pub mod image_render;
-pub mod jobs;
 pub mod manifest;
 pub mod oaa_archive;
 pub mod oaa_validation;
@@ -44,6 +45,8 @@ pub enum AppError {
     Io(#[from] std::io::Error),
     #[error("image error: {0}")]
     Image(#[from] image::ImageError),
+    #[error("{0}")]
+    Render(#[from] crate::image_render::RenderError),
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("zip error: {0}")]
@@ -287,8 +290,6 @@ pub fn run() {
             commands::imports::resolve_snikt_reconciliation_command,
             commands::workspace::open_collection_command,
             commands::workspace::close_collection_command,
-            commands::jobs::list_jobs_command,
-            commands::jobs::cancel_job_command,
             commands::maintenance::catalog_consistency_check_command,
             commands::maintenance::repair_manifest_projections_command,
             commands::maintenance::file_operation_recovery_report_command,
@@ -326,6 +327,7 @@ pub fn run() {
             commands::images::cache_image_data_url_command,
             commands::images::file_asset_image_data_url_command,
             commands::images::derived_asset_image_data_url_command,
+            commands::images::open_external_url_command,
             finish_startup_trace_command
         ])
         .run(tauri::generate_context!())

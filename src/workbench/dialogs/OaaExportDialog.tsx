@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import type { OaaExportProgress, OaaExportReport } from "../../domain/types";
 
 export type OaaExportWizardState = {
@@ -107,8 +105,8 @@ export function OaaExportDialog({
               Include private collector metadata
             </label>
             <p className="workspace-command-note">
-              Turn this off before sharing an OAA archive publicly. Private metadata includes
-              purchase, value, provenance, and personal note fields.
+              Turn this on only for private backups. Private metadata includes purchase, value,
+              provenance, and personal note fields.
             </p>
           </fieldset>
 

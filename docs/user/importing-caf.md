@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Importing From ComicArtFans CSV
 
 OA Curator can import a ComicArtFans CSV export into a local OA Curator workspace.

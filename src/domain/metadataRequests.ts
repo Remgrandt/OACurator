@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { ART_TYPE_OPTIONS, MEDIA_TYPE_OPTIONS } from "./constants";
 import { blankToNull, labelForId } from "./formatters";
 import type { DetailForm, MetadataSaveRequest } from "./types";

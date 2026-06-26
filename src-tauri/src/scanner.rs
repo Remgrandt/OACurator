@@ -1,15 +1,13 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{
     ArtworkCacheWarning, ArtworkDetail, AssetKind, Catalog, DerivedAssetInsert,
     DerivedAssetRenderInsert, FileAssetImageProbeInsert, FileAssetKnownMetadataInsert,
     FileAssetMetadata,
 };
+use crate::diagnostics::{preview_generation_warning, write_diagnostic_log, DiagnosticOperation};
 use crate::image_render::{
     estimate_decode_weight_bytes, preview_recipe, probe_source, render_image_to_file,
     thumbnail_recipe, ImageProbeResult, RenderLimits, RenderPurpose, RenderRequest, RenderedImage,
 };
-use crate::jobs::JobCancellation;
 use crate::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -195,7 +193,12 @@ pub fn attach_files_to_artwork(
                 &current_path,
                 cache_dir,
             ) {
-                cache_warnings.push(cache_warning_for_error(file_asset_id, &current_path, error));
+                cache_warnings.push(cache_warning_for_error(
+                    file_asset_id,
+                    &current_path,
+                    cache_dir,
+                    error,
+                ));
             }
         }
     }
@@ -901,6 +904,7 @@ pub fn ensure_artwork_cache_derivatives_with_warnings(
             Err(error) => warnings.push(cache_warning_for_error(
                 asset.id,
                 &asset.current_path,
+                cache_dir,
                 error,
             )),
         }
@@ -992,26 +996,6 @@ pub fn generate_cache_derivatives_parallel<F>(
 ) where
     F: FnMut(ThumbnailCacheWorkResult),
 {
-    generate_cache_derivatives_parallel_with_cancellation(
-        cache_work_items,
-        cache_dir,
-        worker_count,
-        options,
-        None,
-        &mut on_result,
-    );
-}
-
-pub fn generate_cache_derivatives_parallel_with_cancellation<F>(
-    cache_work_items: Vec<ThumbnailCacheWorkItem>,
-    cache_dir: &Path,
-    worker_count: usize,
-    options: CacheDerivativeOptions,
-    cancellation: Option<JobCancellation>,
-    mut on_result: F,
-) where
-    F: FnMut(ThumbnailCacheWorkResult),
-{
     let queue = Arc::new(Mutex::new(VecDeque::from(cache_work_items)));
     let cache_dir = cache_dir.to_path_buf();
     let (sender, receiver) = mpsc::channel();
@@ -1021,24 +1005,11 @@ pub fn generate_cache_derivatives_parallel_with_cancellation<F>(
             let queue = Arc::clone(&queue);
             let sender = sender.clone();
             let cache_dir = cache_dir.clone();
-            let cancellation = cancellation.clone();
             scope.spawn(move || loop {
-                if cancellation
-                    .as_ref()
-                    .is_some_and(JobCancellation::is_canceled)
-                {
-                    break;
-                }
                 let item = next_cache_work_item(&queue);
                 let Some(item) = item else {
                     break;
                 };
-                if cancellation
-                    .as_ref()
-                    .is_some_and(JobCancellation::is_canceled)
-                {
-                    break;
-                }
                 let result = build_cached_derivatives_profiled(
                     item.artwork_id,
                     item.file_asset_id,
@@ -1052,12 +1023,6 @@ pub fn generate_cache_derivatives_parallel_with_cancellation<F>(
         }
         drop(sender);
         for result in receiver {
-            if cancellation
-                .as_ref()
-                .is_some_and(JobCancellation::is_canceled)
-            {
-                continue;
-            }
             on_result(result);
         }
     });
@@ -1112,18 +1077,24 @@ fn combine_cache_profiles(
 fn cache_warning_for_error(
     file_asset_id: i64,
     path: &Path,
+    cache_dir: &Path,
     error: AppError,
 ) -> ArtworkCacheWarning {
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("this file");
+    let presentation = preview_generation_warning(filename, &error);
+    let _ = write_diagnostic_log(
+        cache_dir,
+        DiagnosticOperation::PreviewGeneration,
+        Some(path),
+        &presentation,
+    );
     ArtworkCacheWarning {
         file_asset_id,
         path: path.to_path_buf(),
-        message: format!(
-            "Preview could not be generated for {}. The source file was not changed. {}",
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("this file"),
-            error
-        ),
+        message: presentation.message,
     }
 }
 
@@ -1131,6 +1102,7 @@ fn cache_warning_for_error(
 mod tests {
     use super::*;
     use crate::catalog::{FileAssetKnownMetadataInsert, FileAssetMetadata};
+    use crate::image_render::RenderError;
     use tempfile::TempDir;
 
     #[test]
@@ -1245,5 +1217,35 @@ mod tests {
                 .any(|warning| warning.message.contains("The source file was not changed")),
             "probe/render failures should be recorded as warnings, not attachment blockers"
         );
+    }
+
+    #[test]
+    fn cache_warning_hides_renderer_detail_and_logs_it() {
+        let dir = TempDir::new().unwrap();
+        let source_path = dir
+            .path()
+            .join("Amanda Rachels - Zombie Queen Magik - RAW.tif");
+        let error = AppError::Render(RenderError::EncodeFailed {
+            path: dir.path().join("thumbnail.rendering.png"),
+            detail: "pngsave: tiff2vips: Old-style JPEG compression support is not configured \
+                     tiff2vips: Old-style JPEG compression support is not configured \
+                     tiff2vips: source input: Unknown pseudo-tag 65538"
+                .to_string(),
+        });
+
+        let warning = cache_warning_for_error(7, &source_path, dir.path(), error);
+
+        assert!(warning
+            .message
+            .contains("Preview could not be generated for Amanda Rachels"));
+        assert!(warning.message.contains("The source file was not changed"));
+        assert!(!warning.message.contains("Old-style JPEG"));
+        assert!(!warning.message.contains("tiff2vips"));
+
+        let log_path = dir.path().join("logs").join("oa-curator-diagnostics.jsonl");
+        let log = fs::read_to_string(log_path).unwrap();
+        assert!(log.contains("preview_generation"));
+        assert!(log.contains("Old-style JPEG compression support is not configured"));
+        assert!(log.contains("Unknown pseudo-tag 65538"));
     }
 }

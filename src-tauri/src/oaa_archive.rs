@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{
     art_type_id_for_label, artist_role_id_for_label, media_type_id_for_label, ArtistCreditUpdate,
     ArtworkDetail, ArtworkSummary, AssetKind, Catalog, CollectionSummary, DerivedAssetInsert,
@@ -8,6 +6,7 @@ use crate::catalog::{
 use crate::export_policy::ExportPolicy;
 use crate::oaa_validation::ensure_oaa_archive_valid;
 pub use crate::oaa_validation::OAA_MEDIA_TYPE;
+use crate::path_safety::is_safe_archive_path_component;
 use crate::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1835,7 +1834,7 @@ fn validate_archive_path(path: &str, label: &str) -> Result<()> {
         || path.contains('\\')
         || path
             .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+            .any(|segment| !is_safe_archive_path_component(segment))
     {
         return Err(AppError::Message(format!("Unsafe {label}: {path}")));
     }

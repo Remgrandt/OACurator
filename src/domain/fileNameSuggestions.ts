@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 // Frontend cleanup is suggestion-only. Rust path safety remains authoritative.
 export function suggestedExportFileStem(value: string) {
   return (

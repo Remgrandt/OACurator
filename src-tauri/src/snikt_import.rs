@@ -1,11 +1,9 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{
     artist_role_id_for_label, default_collection_manifest_path, default_gallery_manifest_path,
     ArtistCreditUpdate, ArtworkSummary, Catalog, CollectionSummary, ImportedSniktCsvArtwork,
     SniktMetadataUpdate,
 };
-use crate::path_safety::unique_child_folder;
+use crate::path_safety::{safe_path_component, unique_child_folder};
 use crate::{AppError, Result};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -186,7 +184,10 @@ where
     let gallery_name = "SNIKT.com gallery";
     let gallery_folder = collection_folder
         .join("galleries")
-        .join(safe_path_component(gallery_name));
+        .join(safe_path_component(
+            gallery_name,
+            "SNIKT.com CSV Collection",
+        ));
     let gallery_manifest_path = default_gallery_manifest_path(&gallery_folder);
     let gallery = if gallery_manifest_path.exists() {
         let gallery = catalog.open_gallery_without_activating(&gallery_manifest_path)?;
@@ -514,22 +515,4 @@ fn normalize_snikt_csv_date(
         "SNIKT.com CSV row {row_number} Created Date \"{value}\" is not a supported date; leaving it blank."
     ));
     None
-}
-
-fn safe_path_component(value: &str) -> String {
-    let mut sanitized = value
-        .chars()
-        .map(|character| match character {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            character if character.is_control() => '_',
-            character => character,
-        })
-        .collect::<String>()
-        .trim()
-        .trim_matches('.')
-        .to_string();
-    if sanitized.is_empty() {
-        sanitized = "SNIKT.com CSV Collection".to_string();
-    }
-    sanitized
 }

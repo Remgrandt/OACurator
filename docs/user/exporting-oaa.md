@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Exporting OAA Archives
 
 ![Original Art Archive logo](assets/oaa-logo.svg){ .oaa-doc-logo }

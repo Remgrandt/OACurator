@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Application Interface
 
 The OA Curator application interface is the main screen for browsing and editing a Collection.

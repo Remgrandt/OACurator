@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::image_metadata::read_image_metadata;
 use crate::image_render::backend::BackendRenderResult;
 use crate::image_render::error::RenderError;
@@ -232,27 +230,8 @@ fn query_vips_version(vips: &Path) -> String {
 fn vips_command(tool: &Path) -> Command {
     let mut command = Command::new(tool);
     configure_vips_runtime_environment(&mut command, tool);
-    configure_vips_process_behavior(&mut command);
     command
 }
-
-#[cfg(target_os = "windows")]
-const WINDOWS_CREATE_NO_WINDOW: u32 = 0x08000000;
-
-#[cfg(target_os = "windows")]
-fn windows_vips_creation_flags() -> u32 {
-    WINDOWS_CREATE_NO_WINDOW
-}
-
-#[cfg(target_os = "windows")]
-fn configure_vips_process_behavior(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-
-    command.creation_flags(windows_vips_creation_flags());
-}
-
-#[cfg(not(target_os = "windows"))]
-fn configure_vips_process_behavior(_command: &mut Command) {}
 
 #[cfg(target_os = "macos")]
 fn configure_vips_runtime_environment(command: &mut Command, tool: &Path) {
@@ -384,13 +363,4 @@ fn command_output_detail(output: &std::process::Output) -> String {
         return stdout;
     }
     format!("libvips exited with {}", output.status)
-}
-
-#[cfg(test)]
-mod tests {
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_vips_child_processes_are_started_without_a_console_window() {
-        assert_eq!(super::windows_vips_creation_flags(), 0x08000000);
-    }
 }

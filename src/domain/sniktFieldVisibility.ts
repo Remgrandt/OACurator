@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 export const SNIKT_EXTENSION_FIELD_LABELS = [
   "Art type",
   "Publisher",

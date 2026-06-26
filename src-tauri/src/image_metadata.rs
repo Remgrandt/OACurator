@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::{AppError, Result};
 use std::fs::File;
 use std::io::{BufReader, Read};

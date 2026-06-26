@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { ARTIST_ROLE_OPTIONS, ART_TYPE_OPTIONS, MEDIA_TYPE_OPTIONS } from "./constants";
 import type {
   ArtworkDetail,

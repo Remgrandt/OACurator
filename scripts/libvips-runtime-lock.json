@@ -1,0 +1,23 @@
+{
+  "notice": "Copyright (c) 2026 Remgrandt Works. All rights reserved.",
+  "formatVersion": 1,
+  "windows": {
+    "libvipsVersion": "8.18.3",
+    "assetName": "vips-dev-x64-web-8.18.3-static-ffi.zip",
+    "url": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.3/vips-dev-x64-web-8.18.3-static-ffi.zip",
+    "sha256": "b67c6b197c04b6c09a9acd6a98761b2ee11f9dac8e68c8207b9dc43c3b92fa2a"
+  },
+  "macos": {
+    "sharpLibvipsVersion": "1.2.4",
+    "packages": {
+      "arm64": {
+        "name": "@img/sharp-libvips-darwin-arm64",
+        "sha256": "2b7a106979fc6c3e9ba27a7b9e305c610a0c11c2d10aac3b3d317d706cf302f7"
+      },
+      "x86_64": {
+        "name": "@img/sharp-libvips-darwin-x64",
+        "sha256": "82994201ae8df58db02c35010548df2ebbb8cf39f9d21ba1bdf29b7102fb6ca4"
+      }
+    }
+  }
+}

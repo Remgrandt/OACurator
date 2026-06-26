@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { isRenderableImageExtension } from "./formatters";
 import type { CarouselImageItem, FileAsset } from "./types";
 

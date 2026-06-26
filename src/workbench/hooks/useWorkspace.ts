@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { useMemo, useState } from "react";
 import type { ArtworkSummary, GallerySummary, WorkspaceState } from "../../domain/types";
 

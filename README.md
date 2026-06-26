@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 <p align="center">
   <img src="docs/user/assets/oac-logo.svg" alt="OA Curator logo" width="220">
 </p>
@@ -10,19 +8,9 @@ Local-first desktop catalog for original art collectors.
 
 OA Curator helps collectors keep a private, durable catalog of original art scans, metadata, gallery-site links, notes, and export-ready files on their own computer. It is built to complement community gallery sites without making a collection depend on any one website.
 
-## Public Beta
-
-This public repository exists for official distribution and source disclosure. It lets users inspect what OA Curator does and build an unmodified copy for personal use under the license.
-
-OA Curator is freeware, not open source. This project is not accepting third-party code contributions, pull requests, modified builds, repackaging, or redistribution unless Remgrandt Games LLC authorizes them in writing.
-
-Official builds and release assets are distributed by Remgrandt Works.
-
 ## License
 
-OA Curator is source-available freeware. You may view, build, install, and use unmodified copies under the terms in [LICENSE](LICENSE).
-
-All rights not expressly granted in the license are reserved. See [LEGAL.md](LEGAL.md) for publisher and trade-name information.
+OA Curator is source-available freeware, not open source. You may view, build, install, and use unmodified copies under the terms in `LICENSE`. Redistribution, modified builds, and third-party code contributions are not permitted unless Remgrandt Games LLC authorizes them in writing.
 
 ## What It Does Today
 
@@ -57,43 +45,62 @@ Purchase price, estimated value, purchase date, provenance, and personal notes a
 
 Move and rename workflows are expected to use preview, validation, no-overwrite checks, explicit confirmation, and operation logging before physical files are changed.
 
-## Build An Unmodified Copy
+## Updates
+
+Official desktop builds can check for signed OA Curator updates from the Help menu. Updates are not installed silently; the app asks before downloading and installing, and Windows builds close the app to finish installation.
+
+## Imports, Exports, and Gallery Site Workflows
+
+OA Curator uses the Collection, Gallery, and Artwork structure. It can store gallery-site IDs and links for ComicArtFans, SNIKT.com, and Raremarq while keeping the local OAC identity as the stable record.
+
+ComicArtFans and SNIKT.com support are CSV-based import and local curation workflows. SNIKT.com upload-prefill opens a browser URL with metadata filled in where supported, but the user still chooses the image file on SNIKT.com.
+
+Raremarq support is centered on bulk-upload CSV export. OA Curator can write a local Raremarq CSV using selected scope and URL-fill options. It does not crawl Raremarq or directly upload artwork records.
+
+<img align="right" src="docs/user/assets/oaa-logo.svg" alt="Original Art Archive logo" width="96">
+
+OAA is the portable archive path for collector-owned data. OAA import/export can carry OA Curator metadata, gallery-site links, and optionally artwork files.
+
+The OAA logo is used only to truthfully describe OA Curator's compatibility with the Original Art Archive Format. It does not imply separate certification, endorsement, or maintenance by the OAA project.
+
+## Development
 
 Prerequisites:
 
-- Node.js 22 or newer and npm.
-- Rust stable.
-- Windows: Microsoft C++ Build Tools and WebView2 for Tauri.
-- macOS: Xcode Command Line Tools for Tauri.
-- Python 3.12 or newer for building the offline user guide.
+- Node.js and npm.
+- Rust MSVC toolchain on Windows.
+- Windows: Microsoft C++ Build Tools and WebView2 for Tauri development.
+- Python with MkDocs dependencies from `requirements-docs.txt` when building user docs.
 
 Install dependencies:
 
 ```powershell
-npm ci
+npm install
 python -m pip install -r requirements-docs.txt
 ```
 
-Run source checks used by the release package:
+Fast local verification:
 
 ```powershell
-npm run check:release
+npm run check:fast
 ```
 
-Build a local desktop package:
+Full verification:
 
 ```powershell
-npm run release:windows
+npm run check:full
 ```
 
-```bash
-npm run release:macos
+Run the desktop app in development:
+
+```powershell
+npm run tauri dev
 ```
 
-Official signed releases require Remgrandt-controlled signing credentials and updater keys. Personal unmodified builds are allowed only within the limits of [LICENSE](LICENSE).
+The npm package is marked private because OA Curator is distributed as a desktop app, not as an npm package.
 
-## Documentation And Notices
+## Documentation and Notices
 
-User documentation lives in `docs/user` and builds into the app's offline help.
+User documentation lives in `docs/user` and builds into the app's offline help with MkDocs.
 
-Project attribution notes for bundled visual, theme, and UI resources live in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+Project attribution notes for bundled visual/theme/UI resources live in `ATTRIBUTIONS.md`. OA Curator's own license is in `LICENSE`.

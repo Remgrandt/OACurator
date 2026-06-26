@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import type { RefObject } from "react";
 import type {
   CafImportReconciliationItem,

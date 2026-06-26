@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { useCallback, useEffect, useRef } from "react";
 import { metadataAutosaveKey } from "../../domain/metadataRequests";
 import type { ArtworkDetail, DetailForm } from "../../domain/types";

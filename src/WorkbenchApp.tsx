@@ -19,7 +19,6 @@ import {
   open as openDialog,
   save as saveDialog,
 } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Allotment } from "allotment";
 import {
   ARTIST_ROLE_OPTIONS,
@@ -49,6 +48,12 @@ import {
   type AppUpdateInfo,
   type AppUpdateProgress,
 } from "./domain/appUpdates";
+import { DemoCaptionOverlay } from "./demo/DemoCaptionOverlay";
+import {
+  DEMO_ATTACH_FILE_EVENT,
+  demoAttachFileEventDetail,
+  demoAutomationEnabled,
+} from "./demo/demoAutomationEvents";
 import { suggestedExportFileStem } from "./domain/fileNameSuggestions";
 import { metadataRequestForForm } from "./domain/metadataRequests";
 import { selectRenderableSourceForPngExport } from "./domain/pngExportSources";
@@ -221,6 +226,7 @@ type SniktUploadPrefillUrlRequest = {
 type CafMissingReportState = {
   rows: CafMissingArtworkReportRow[];
   isWriting: boolean;
+  includePrivateMetadata: boolean;
 };
 type LoadWorkspaceOptions = {
   resetTree?: boolean;
@@ -517,6 +523,19 @@ function WorkbenchApp() {
     if (!workspaceCommand) return;
     workspaceCommandInitialFocusRef.current?.focus();
   }, [workspaceCommand]);
+
+  useEffect(() => {
+    if (!demoAutomationEnabled()) return;
+
+    const handleAttachFile = (event: Event) => {
+      const request = demoAttachFileEventDetail(event);
+      if (!request) return;
+      void attachFilePaths(request.paths, request.mode);
+    };
+
+    window.addEventListener(DEMO_ATTACH_FILE_EVENT, handleAttachFile);
+    return () => window.removeEventListener(DEMO_ATTACH_FILE_EVENT, handleAttachFile);
+  }, [selectedArtworkId]);
 
   useEffect(() => {
     function closeExplorerContextMenu() {
@@ -2229,7 +2248,11 @@ function WorkbenchApp() {
           setCafReconciliation(null);
         }
         if (report.missing_artworks.length > 0) {
-          setCafMissingReport({ rows: report.missing_artworks, isWriting: false });
+          setCafMissingReport({
+            rows: report.missing_artworks,
+            isWriting: false,
+            includePrivateMetadata: false,
+          });
         }
         if (report.messages.length > 0) {
           postCommandMessages = cafImportScreenMessages(report);
@@ -2468,7 +2491,7 @@ function WorkbenchApp() {
     if (!trimmedUrl) return;
     try {
       setError("");
-      await openUrl(trimmedUrl);
+      await openExternalBrowserUrl(trimmedUrl);
       setStatus(`${label} opened`);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -2484,7 +2507,7 @@ function WorkbenchApp() {
     try {
       setError("");
       const url = await invoke<string>("snikt_upload_prefill_url_command", { request });
-      await openUrl(url);
+      await openExternalBrowserUrl(url);
       setStatus("SNIKT upload prefill opened");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -2623,7 +2646,7 @@ function WorkbenchApp() {
       setOaaExportWizard({
         archivePath: root ? `${ensureTrailingPathSeparator(root)}${defaultName}` : defaultName,
         includeImages: true,
-        includePrivateMetadata: true,
+        includePrivateMetadata: false,
         isRunning: false,
         progress: null,
         report: null,
@@ -2844,6 +2867,7 @@ function WorkbenchApp() {
       const rowsWritten = await invoke<number>("write_caf_missing_report_command", {
         request: {
           path: target,
+          include_private_metadata: cafMissingReport.includePrivateMetadata,
           rows: cafMissingReport.rows,
         },
       });
@@ -2913,13 +2937,21 @@ function WorkbenchApp() {
       return;
     }
     const selectedPlan = raremarqExportPlanScope(raremarqExportWizard);
-    if (
-      raremarqExportWizard.urlMode === "tmpfiles" &&
-      selectedPlan.tmpfiles_missing_file_count > 0
-    ) {
-      setError(
-        `${pluralize(selectedPlan.tmpfiles_missing_file_count, "entry", "entries")} cannot be uploaded because no primary file is attached.`,
-      );
+    const tmpfilesBlockedCount =
+      selectedPlan.tmpfiles_missing_file_count + selectedPlan.tmpfiles_unrenderable_file_count;
+    if (raremarqExportWizard.urlMode === "tmpfiles" && tmpfilesBlockedCount > 0) {
+      const messages: string[] = [];
+      if (selectedPlan.tmpfiles_missing_file_count > 0) {
+        messages.push(
+          `${pluralize(selectedPlan.tmpfiles_missing_file_count, "entry", "entries")} cannot be uploaded because no primary file is attached.`,
+        );
+      }
+      if (selectedPlan.tmpfiles_unrenderable_file_count > 0) {
+        messages.push(
+          `${pluralize(selectedPlan.tmpfiles_unrenderable_file_count, "entry", "entries")} cannot be uploaded because the primary file is not a supported image.`,
+        );
+      }
+      setError(messages.join("\n"));
       return;
     }
 
@@ -2981,7 +3013,7 @@ function WorkbenchApp() {
         raremarq_csv_url_mode: raremarqExportWizard.urlMode,
       });
       setStatus(raremarqCsvExportReportSummary(report));
-      if (report.messages.length > 0) {
+      if (raremarqExportWizard.urlMode !== "blank" && report.messages.length > 0) {
         setError(report.messages.join("\n"));
       }
     } catch (caught) {
@@ -3384,6 +3416,27 @@ function WorkbenchApp() {
           CAF CSV import did not include {count} tracked {label}. Save a report if you want to
           review what CAF omitted from the export.
         </p>
+        <p className="workspace-command-note">
+          Private collector metadata is not included by default.
+        </p>
+        <label className="radio-row">
+          <input
+            type="checkbox"
+            checked={cafMissingReport.includePrivateMetadata}
+            disabled={cafMissingReport.isWriting}
+            onChange={(event) =>
+              setCafMissingReport((current) =>
+                current
+                  ? { ...current, includePrivateMetadata: event.currentTarget.checked }
+                  : current,
+              )
+            }
+          />
+          Include private collector metadata
+        </label>
+        <p className="workspace-command-note">
+          Includes purchase date, purchase price, estimated value, and personal notes in the CSV.
+        </p>
         <div className="workspace-command-actions">
           <button
             type="button"
@@ -3406,6 +3459,7 @@ function WorkbenchApp() {
 
   return (
     <main className="app-shell" role="application" aria-label="OA Curator Workbench">
+      <DemoCaptionOverlay />
       <CommandBar
         theme={theme}
         onNewCollection={() => void beginWorkspaceCommand("new_collection")}
@@ -6672,6 +6726,21 @@ function errorMessage(caught: unknown): string {
   return String(caught);
 }
 
+function isOpenableExternalBrowserUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function openExternalBrowserUrl(url: string): Promise<void> {
+  return invoke("open_external_url_command", { url });
+}
+
 function isCafCollectionIdMismatchError(message: string): boolean {
   return message.includes("is already linked to CAF Collection");
 }
@@ -6838,7 +6907,7 @@ function HelpPage({ page, onClose }: { page: "about" | "licensing"; onClose: () 
             <dl>
               <div>
                 <dt>Version</dt>
-                <dd>0.1.3 public beta</dd>
+                <dd>0.1.4 public beta</dd>
               </div>
               <div>
                 <dt>Publisher</dt>
@@ -6934,8 +7003,11 @@ function UrlPropertyRow({
   };
 }) {
   const inputId = propertyInputId(label);
-  const hasUrl = value.trim().length > 0;
+  const canOpenUrl = isOpenableExternalBrowserUrl(value);
   const helpText = propertyHelpForLabel(label);
+  const openTitle = canOpenUrl
+    ? `Open ${label} in browser`
+    : "Only http:// and https:// links can be opened.";
 
   return (
     <div className="property-row">
@@ -6948,8 +7020,8 @@ function UrlPropertyRow({
           type="button"
           className="property-icon-button"
           aria-label={`Open ${label} in browser`}
-          title={`Open ${label} in browser`}
-          disabled={!hasUrl}
+          title={openTitle}
+          disabled={!canOpenUrl}
           onClick={onOpen}
         >
           <ToolbarIcon name="external-link" />

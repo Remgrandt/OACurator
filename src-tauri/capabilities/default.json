@@ -14,7 +14,6 @@
     "core:window:allow-set-focus",
     "core:webview:allow-create-webview-window",
     "dialog:default",
-    "opener:default",
     "process:default",
     "updater:default"
   ]

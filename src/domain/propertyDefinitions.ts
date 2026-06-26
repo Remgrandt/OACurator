@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 export type PropertySource = "caf" | "snikt" | "raremarq";
 export type PropertySourceFilters = Record<PropertySource, boolean>;
 

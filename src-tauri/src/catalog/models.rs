@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

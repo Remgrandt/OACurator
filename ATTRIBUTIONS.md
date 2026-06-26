@@ -1,7 +1,5 @@
 # Attributions
 
-Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 This file records bundled visual, theme, and UI attributions for OA Curator. It is not a generated complete dependency license report for every build-time or runtime package.
 
 ## OA Curator marks
@@ -9,7 +7,7 @@ This file records bundled visual, theme, and UI attributions for OA Curator. It 
 OA Curator includes OA Curator logo assets created for this app.
 
 - Local source files: `public/oac-logo-*.svg`, `public/oac-logo-app.png`, `docs/user/assets/oac-logo.svg`
-- Rights holder: Remgrandt Works
+- Rights holder: Remgrandt Games LLC
 
 ## Original Art Archive marks
 
@@ -17,7 +15,7 @@ OA Curator includes the Original Art Archive (OAA) logo to truthfully describe c
 
 - Source: OAA Format repository `assets/oaa-logo.svg` (`https://github.com/Original-Art-Archive/oaa-spec`)
 - Local source file: `docs/user/assets/oaa-logo.svg`
-- Rights holder: Remgrandt Works
+- Rights holder: Remgrandt Games LLC
 - Usage: compatibility use only; does not imply separate official status, endorsement, certification, or maintenance by the OAA project.
 - Governing source guidance: OAA Format repository `LICENSE.md` and `assets/README.md`.
 

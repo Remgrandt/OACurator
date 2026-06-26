@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Troubleshooting
 
 Use this page when something in OA Curator does not behave as expected.

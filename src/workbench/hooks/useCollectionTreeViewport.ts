@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { useCallback, useLayoutEffect, useRef, useState, type UIEvent } from "react";
 
 export type CollectionTreeViewport = {

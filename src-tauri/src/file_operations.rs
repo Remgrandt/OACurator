@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::catalog::{
     AssetKind, Catalog, FileRenameExecution, FileRenamePlan, FileRenameResult, OperationLog,
 };

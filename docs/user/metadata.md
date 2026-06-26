@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Metadata
 
 Metadata makes OA Curator more useful than folders and filenames. It helps you search, browse, prepare supported gallery site workflows, and export portable OAA archives.

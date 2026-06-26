@@ -1,6 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
-use crate::AppError;
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
@@ -32,10 +29,4 @@ pub enum RenderError {
     EncodeFailed { path: PathBuf, detail: String },
     #[error("Rendered output could not be verified at {path}: {detail}")]
     VerificationFailed { path: PathBuf, detail: String },
-}
-
-impl From<RenderError> for AppError {
-    fn from(error: RenderError) -> Self {
-        AppError::Message(error.to_string())
-    }
 }

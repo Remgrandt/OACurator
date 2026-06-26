@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use crate::image_metadata::read_image_metadata;
 use crate::image_render::backend::{self, BackendRenderResult};
 use crate::image_render::error::RenderError;

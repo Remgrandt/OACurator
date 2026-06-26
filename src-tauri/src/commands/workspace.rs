@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use super::cache::start_thumbnail_cache_generation;
 use super::*;
 
@@ -45,7 +43,6 @@ pub async fn open_collection_command(
         app,
         state.catalog.clone(),
         state.cache_dir.clone(),
-        state.jobs.clone(),
         collection.id,
     );
     Ok(collection)

@@ -2,7 +2,7 @@
 
 [package]
 name = "oa-curator"
-version = "0.1.3"
+version = "0.1.4"
 description = "Local-first desktop catalog for original art scans"
 authors = ["Remgrandt Works"]
 edition = "2021"
@@ -34,7 +34,6 @@ directories = "6"
 image = { version = "0.25", features = ["jpeg", "png", "tiff"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
-sanitize-filename = "0.5"
 thiserror = "2"
 tiff = "0.11"
 unicode-normalization = "0.1"

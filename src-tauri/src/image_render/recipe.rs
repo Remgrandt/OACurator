@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -63,8 +61,8 @@ pub fn thumbnail_recipe() -> RenderRecipe {
     RenderRecipe {
         version: 1,
         resize: ResizeMode::FitWithin {
-            max_width: Some(320),
-            max_height: Some(320),
+            max_width: Some(256),
+            max_height: Some(256),
         },
         output: OutputFormat::Jpeg { quality: 82 },
         color: ColorPolicy::ConvertToSrgb8,
@@ -135,5 +133,21 @@ pub fn raremarq_upload_jpeg_recipe(max_dimension: u32, quality: u8) -> RenderRec
         },
         filter: ResizeFilter::Lanczos3,
         allow_upscale: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{thumbnail_recipe, ResizeMode};
+
+    #[test]
+    fn thumbnail_recipe_fits_within_256_square() {
+        assert_eq!(
+            thumbnail_recipe().resize,
+            ResizeMode::FitWithin {
+                max_width: Some(256),
+                max_height: Some(256),
+            }
+        );
     }
 }

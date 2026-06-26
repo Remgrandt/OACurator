@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Core Concepts
 
 OA Curator uses collector-friendly records and file-safe image handling. You do not need to understand the internal storage model to use it, but these terms appear throughout the app.

@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { raremarqExportPlanScope } from "../../domain/reportSummaries";
 import type {
   RaremarqCsvExportPlan,
@@ -40,11 +38,13 @@ export function RaremarqExportDialog({
   const blankCount = selectedPlan.blank_url_count;
   const tmpfilesLargeCount = selectedPlan.tmpfiles_large_file_count;
   const tmpfilesMissingCount = selectedPlan.tmpfiles_missing_file_count;
+  const tmpfilesUnrenderableCount = selectedPlan.tmpfiles_unrenderable_file_count;
+  const tmpfilesBlockedCount = tmpfilesMissingCount + tmpfilesUnrenderableCount;
   const canClose = !wizard.isRunning;
   const exportDisabled =
     wizard.isRunning ||
     !wizard.csvPath.trim() ||
-    (wizard.urlMode === "tmpfiles" && tmpfilesMissingCount > 0);
+    (wizard.urlMode === "tmpfiles" && tmpfilesBlockedCount > 0);
 
   return (
     <div className="workspace-command-backdrop">
@@ -166,6 +166,12 @@ export function RaremarqExportDialog({
               <p className="workspace-command-note">
                 {pluralize(tmpfilesMissingCount, "entry", "entries")} cannot be uploaded because no
                 primary file is attached.
+              </p>
+            )}
+            {tmpfilesUnrenderableCount > 0 && (
+              <p className="workspace-command-note">
+                {pluralize(tmpfilesUnrenderableCount, "entry", "entries")} cannot be uploaded
+                because the primary file is not a supported image.
               </p>
             )}
           </fieldset>

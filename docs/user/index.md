@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # OA Curator User Guide
 
 ![OA Curator logo](assets/oac-logo.svg){ .oac-doc-logo }

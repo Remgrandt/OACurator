@@ -1,5 +1,3 @@
-<!-- Copyright (c) 2026 Remgrandt Works. All rights reserved. -->
-
 # Importing From SNIKT.com
 
 OA Curator can import a SNIKT.com gallery CSV export from disk.

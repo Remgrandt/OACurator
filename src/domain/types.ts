@@ -298,6 +298,7 @@ export type RaremarqCsvExportPlanScope = {
   blank_url_count: number;
   tmpfiles_upload_count: number;
   tmpfiles_missing_file_count: number;
+  tmpfiles_unrenderable_file_count: number;
   tmpfiles_large_file_count: number;
 };
 

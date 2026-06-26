@@ -1,5 +1,3 @@
-// Copyright (c) 2026 Remgrandt Works. All rights reserved.
-
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 export const USER_GUIDE_URL = "/help/index.html";
