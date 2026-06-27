@@ -11,6 +11,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -6869,10 +6870,28 @@ function formatByteCount(value: number) {
 function HelpPage({ page, onClose }: { page: "about" | "licensing"; onClose: () => void }) {
   const title = page === "about" ? "About OA Curator" : "Licensing";
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
     closeButtonRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (page !== "about") return;
+
+    let cancelled = false;
+    void getVersion()
+      .then((version) => {
+        if (!cancelled) setAppVersion(version);
+      })
+      .catch(() => {
+        if (!cancelled) setAppVersion(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [page]);
 
   return (
     <div className="help-page-backdrop">
@@ -6907,7 +6926,7 @@ function HelpPage({ page, onClose }: { page: "about" | "licensing"; onClose: () 
             <dl>
               <div>
                 <dt>Version</dt>
-                <dd>0.1.4 public beta</dd>
+                <dd>{appVersion ? `${appVersion} public beta` : "Public beta"}</dd>
               </div>
               <div>
                 <dt>Publisher</dt>
