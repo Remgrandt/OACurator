@@ -10,9 +10,9 @@ use crate::catalog::{
     art_type_id_for_label, artist_role_id_for_label, artist_role_label_for_id,
     media_type_id_for_label, AppPreferences, ArtistCreditUpdate, ArtworkDetail,
     ArtworkIdLabelPreference, ArtworkMergeUpdate, ArtworkSummary, AssetKind, Catalog,
-    CollectionSummary, DeleteArtworkFileResult, DeletePreview, DeleteResult, DerivedAsset,
-    FileRenameExecution, FileRenamePlan, FileRenameResult, GalleryMergeUpdate, GallerySummary,
-    MetadataUpdate, RecentCollection, WorkspaceLoadProgress, WorkspaceState,
+    CollectionSummary, DeleteArtworkFileResult, DeletePreview, DeleteResult, FileRenameExecution,
+    FileRenamePlan, FileRenameResult, GalleryMergeUpdate, GallerySummary, MetadataUpdate,
+    RecentCollection, WorkspaceLoadProgress, WorkspaceState,
 };
 use crate::export::{create_png_derivative, PngExportVariant};
 use crate::file_operations::FileOperationService;

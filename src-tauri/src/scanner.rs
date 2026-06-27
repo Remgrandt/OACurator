@@ -1,7 +1,7 @@
 use crate::catalog::{
-    ArtworkCacheWarning, ArtworkDetail, AssetKind, Catalog, DerivedAssetInsert,
-    DerivedAssetRenderInsert, FileAssetImageProbeInsert, FileAssetKnownMetadataInsert,
-    FileAssetMetadata,
+    ArtworkCacheWarning, ArtworkDetail, AssetKind, Catalog, DerivedAssetCacheRow,
+    DerivedAssetInsert, DerivedAssetRenderInsert, FileAssetImageProbeInsert,
+    FileAssetKnownMetadataInsert, FileAssetMetadata,
 };
 use crate::diagnostics::{preview_generation_warning, write_diagnostic_log, DiagnosticOperation};
 use crate::image_render::{
@@ -718,13 +718,12 @@ fn existing_cache_derivative(
         if !path.is_file() {
             continue;
         }
-        let metadata = crate::image_metadata::read_image_metadata(&path)?;
         return Ok(Some(GeneratedCacheDerivative {
             derivative_type: derivative_type.to_string(),
             format: extension.to_string(),
             path,
-            width: metadata.width,
-            height: metadata.height,
+            width: 0,
+            height: 0,
             render_purpose: None,
             rendered: None,
         }));
@@ -910,6 +909,99 @@ pub fn ensure_artwork_cache_derivatives_with_warnings(
         }
     }
     Ok((profile, warnings))
+}
+
+pub fn rehydrate_collection_cache_derivatives(
+    catalog: &Catalog,
+    collection_id: i64,
+    cache_dir: &Path,
+) -> Result<usize> {
+    let work_items = catalog
+        .file_assets_for_collection_cache_derivatives(collection_id)?
+        .into_iter()
+        .filter(|(_, _, source_path)| source_path.is_file() && is_supported_image(source_path))
+        .map(
+            |(artwork_id, file_asset_id, source_path)| ThumbnailCacheWorkItem {
+                artwork_id,
+                file_asset_id,
+                source_path,
+                estimated_decode_bytes: 0,
+            },
+        )
+        .collect::<Vec<_>>();
+    if work_items.is_empty() {
+        return Ok(0);
+    }
+
+    let total = work_items.len();
+    let queue = Arc::new(Mutex::new(VecDeque::from(work_items)));
+    let worker_count = thumbnail_cache_worker_count(total, "OACURATOR_OAA_CACHE_WORKERS");
+    let cache_dir = cache_dir.to_path_buf();
+    let (sender, receiver) = mpsc::channel();
+
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let queue = Arc::clone(&queue);
+            let sender = sender.clone();
+            let cache_dir = cache_dir.clone();
+            scope.spawn(move || loop {
+                let item = next_cache_work_item(&queue);
+                let Some(item) = item else {
+                    break;
+                };
+                let result = existing_cache_derivatives_for_source(
+                    item.artwork_id,
+                    item.file_asset_id,
+                    &item.source_path,
+                    &cache_dir,
+                )
+                .map_err(|error| error.to_string());
+                let _ = sender.send(result);
+            });
+        }
+        drop(sender);
+    });
+
+    let mut rows = Vec::new();
+    for result in receiver {
+        let generated = result.map_err(AppError::Message)?;
+        rows.extend(
+            generated
+                .derivatives
+                .into_iter()
+                .map(|derivative| DerivedAssetCacheRow {
+                    artwork_id: generated.artwork_id,
+                    source_file_asset_id: generated.file_asset_id,
+                    derivative_type: derivative.derivative_type,
+                    format: derivative.format,
+                    path: derivative.path,
+                    width: derivative.width,
+                    height: derivative.height,
+                }),
+        );
+    }
+    catalog.add_derived_asset_cache_rows_session_only(&rows)
+}
+
+fn existing_cache_derivatives_for_source(
+    artwork_id: i64,
+    file_asset_id: i64,
+    source: &Path,
+    cache_dir: &Path,
+) -> Result<GeneratedCacheDerivatives> {
+    let folder = image_stable_cache_folder(source, cache_dir)?;
+    let mut derivatives = Vec::new();
+    for derivative_type in ["thumbnail", "preview"] {
+        if let Some(derivative) = existing_cache_derivative(&folder, derivative_type)? {
+            derivatives.push(derivative);
+        }
+    }
+    Ok(GeneratedCacheDerivatives {
+        artwork_id,
+        file_asset_id,
+        derivatives,
+        profile: CacheDerivativeProfile::default(),
+    })
 }
 
 pub fn thumbnail_cache_work_items_for_collection(

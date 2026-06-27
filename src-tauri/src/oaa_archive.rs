@@ -496,7 +496,12 @@ where
             let destination = unique_child_file(&artwork_folder, file_name)?;
             extract_zip_file(&mut zip, &zip_path, &destination)?;
 
-            if file.file_kind == "derivative" && file.width.is_some() && file.height.is_some() {
+            let derivative_type = app_extension_string(&file.extensions, "derivative_type");
+            if file.file_kind == "derivative"
+                && file.width.is_some()
+                && file.height.is_some()
+                && derivative_type.as_deref() != Some("png_export")
+            {
                 let source_file_asset_id = file
                     .extensions
                     .get("app.oa-curator")
@@ -504,13 +509,12 @@ where
                     .and_then(Value::as_str)
                     .and_then(|source_file_id| source_file_ids_by_oaa_file_id.get(source_file_id))
                     .copied();
+                let image_role = manifest_image_role(file.image_role.as_deref(), &file.extensions);
                 let derivative = catalog.add_derived_asset(
                     artwork_id,
                     DerivedAssetInsert {
                         source_file_asset_id,
-                        derivative_type: app_extension_string(&file.extensions, "derivative_type")
-                            .as_deref()
-                            .unwrap_or("oaa_derivative"),
+                        derivative_type: derivative_type.as_deref().unwrap_or("oaa_derivative"),
                         format: file
                             .format
                             .as_deref()
@@ -519,11 +523,12 @@ where
                         path: &destination,
                         width: file.width.unwrap_or_default(),
                         height: file.height.unwrap_or_default(),
-                        image_role: file.image_role.as_deref(),
+                        image_role,
                     },
                 )?;
                 save_extension_blocks(catalog, "derived_asset", derivative.id, &file.extensions)?;
             } else {
+                let image_role = manifest_image_role(file.image_role.as_deref(), &file.extensions);
                 let file_asset_id = catalog.upsert_file_asset_with_known_metadata(
                     artwork_id,
                     FileAssetKnownMetadataInsert {
@@ -542,7 +547,7 @@ where
                         },
                     },
                 )?;
-                if let Some(image_role) = file.image_role.as_deref() {
+                if let Some(image_role) = image_role {
                     catalog.update_image_role(AssetKind::File, file_asset_id, Some(image_role))?;
                 }
                 for link in &file.external_links {
@@ -1686,6 +1691,18 @@ fn portable_image_role(
         }
         other => other.map(str::to_string),
     }
+}
+
+fn manifest_image_role<'a>(
+    image_role: Option<&'a str>,
+    extensions: &'a BTreeMap<String, Value>,
+) -> Option<&'a str> {
+    image_role.or_else(|| {
+        extensions
+            .get("com.comicartfans")
+            .and_then(|extension| extension.get("format_tier"))
+            .and_then(Value::as_str)
+    })
 }
 
 fn caf_public_extension(detail: &crate::catalog::ArtworkDetail) -> Value {

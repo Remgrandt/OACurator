@@ -87,7 +87,7 @@ pub async fn create_png_derivative_command(
     source_file_asset_id: i64,
     export_root: String,
     variant: PngExportVariant,
-) -> std::result::Result<DerivedAsset, String> {
+) -> std::result::Result<ArtworkDetail, String> {
     let catalog = state.catalog.clone();
     let cache_dir = state.cache_dir.clone();
     let export_root = expand_user_path(&export_root);
@@ -97,8 +97,10 @@ pub async fn create_png_derivative_command(
             artwork_id,
             source_file_asset_id,
             &export_root,
+            &cache_dir,
             variant,
         )
+        .and_then(|_| catalog.artwork_detail(artwork_id))
         .map_err(|error| {
             let presentation = png_export_error(&error);
             let _ = write_diagnostic_log(

@@ -161,31 +161,7 @@ export function carouselItemsForDetail(detail: ArtworkDetail): CarouselImageItem
     };
   });
 
-  const pngExportItems = detail.derived_assets
-    .filter((asset) => asset.derivative_type === "png_export")
-    .map(
-      (asset): CarouselImageItem => ({
-        kind: "derived",
-        key: `derived:${asset.id}`,
-        id: asset.id,
-        name: fileNameFromPath(asset.path),
-        path: asset.path,
-        format: asset.format,
-        width: asset.width,
-        height: asset.height,
-        dpi_x: null,
-        dpi_y: null,
-        image_role: asset.image_role ?? null,
-        status: "Export",
-        thumbnailPath: asset.path,
-        previewPath: asset.path,
-        thumbnailSource: { kind: "derived_asset", derivedAssetId: asset.id },
-        previewSource: { kind: "derived_asset", derivedAssetId: asset.id },
-        sourceFileAssetId: asset.source_file_asset_id ?? null,
-      }),
-    );
-
-  return [...fileItems, ...pngExportItems];
+  return fileItems;
 }
 
 export function isRenderableImageExtension(extension: string): boolean {

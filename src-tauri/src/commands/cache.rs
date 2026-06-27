@@ -13,6 +13,11 @@ pub(super) fn start_thumbnail_cache_generation(
             cache_dir: &cache_dir,
             collection_id,
         };
+        let _ = crate::scanner::rehydrate_collection_cache_derivatives(
+            context.catalog,
+            context.collection_id,
+            context.cache_dir,
+        );
         let Some((thumbnail_completed, thumbnail_succeeded, thumbnail_failed)) =
             run_collection_cache_generation_phase(
                 &context,

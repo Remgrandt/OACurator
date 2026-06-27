@@ -2,23 +2,7 @@ use std::path::Path;
 
 use super::{
     normalized_path_prefix, DeleteFilePreview, DeletePreview, DeleteResult, DeleteTrashFailure,
-    DerivedAsset,
 };
-
-pub(crate) fn delete_candidate_for_derived_asset(
-    asset: &DerivedAsset,
-) -> Option<DeleteFilePreview> {
-    (asset.derivative_type == "png_export").then(|| DeleteFilePreview {
-        path: asset.path.clone(),
-        label: asset
-            .path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("PNG export")
-            .to_string(),
-        reason: "PNG export".to_string(),
-    })
-}
 
 pub(crate) fn push_unique_delete_candidate(
     candidates: &mut Vec<DeleteFilePreview>,

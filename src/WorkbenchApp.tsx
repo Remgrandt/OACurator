@@ -96,7 +96,6 @@ import type {
   DeletePreview,
   DeleteResult,
   DeleteTrashFailure,
-  DerivedAsset,
   FileRenameExecution,
   FileRenameResult,
   DefaultProviderFocus,
@@ -2614,18 +2613,24 @@ function WorkbenchApp() {
       setError("");
       setStatus("Creating PNG export");
       setPngExportRunning(true);
-      const derivative = await invoke<DerivedAsset>("create_png_derivative_command", {
+      const nextDetail = await invoke<ArtworkDetail>("create_png_derivative_command", {
         artworkId: detail.id,
         sourceFileAssetId: selectedRenderableSourceForPngExport.id,
         exportRoot: exportDestination,
         variant: pngExportVariant,
       });
-      setDetail({
-        ...detail,
-        derived_assets: [...detail.derived_assets, derivative],
-      });
-      setSelectedCarouselItemKey(`derived:${derivative.id}`);
-      setStatus(`PNG export created: ${derivative.path}`);
+      const existingFileIds = new Set(detail.file_assets.map((asset) => asset.id));
+      const fileAsset =
+        nextDetail.file_assets.find((asset) => !existingFileIds.has(asset.id)) ??
+        nextDetail.file_assets[nextDetail.file_assets.length - 1];
+      setDetail(nextDetail);
+      setWorkspace((current) => updateWorkspaceArtworkSummary(current, nextDetail));
+      if (!fileAsset) {
+        setStatus("PNG export created");
+        return;
+      }
+      setSelectedCarouselItemKey(`file:${fileAsset.id}`);
+      setStatus(`PNG export created: ${fileAsset.current_path}`);
     } catch (caught) {
       setError(errorMessage(caught));
       setStatus("PNG export failed");
@@ -6543,10 +6548,7 @@ function mergeArtistCreditForms(
 }
 
 function artworkFileCountFromDetail(detail: ArtworkDetail): number {
-  return (
-    detail.file_assets.length +
-    detail.derived_assets.filter((asset) => asset.derivative_type === "png_export").length
-  );
+  return detail.file_assets.length;
 }
 
 function mergedArtworkGalleryNames(source: ArtworkSummary, target: ArtworkSummary): string[] {
@@ -6796,9 +6798,7 @@ function updateArtworkSummaryFromDetail(
     format: detail.format ?? null,
     source_folder: detail.source_folder,
     thumbnail_path: thumbnailPathFromDetail(detail),
-    file_count:
-      detail.file_assets.length +
-      detail.derived_assets.filter((asset) => asset.derivative_type === "png_export").length,
+    file_count: detail.file_assets.length,
     artist_credits: detail.artist_credits,
   };
 }

@@ -268,6 +268,17 @@ pub struct DerivedAssetInsert<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct DerivedAssetCacheRow {
+    pub artwork_id: i64,
+    pub source_file_asset_id: i64,
+    pub derivative_type: String,
+    pub format: String,
+    pub path: PathBuf,
+    pub width: i64,
+    pub height: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct DerivedAssetRenderInsert {
     pub derived_asset_id: i64,
     pub purpose: String,

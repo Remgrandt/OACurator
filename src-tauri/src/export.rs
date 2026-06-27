@@ -1,9 +1,10 @@
-use crate::catalog::{Catalog, DerivedAsset, DerivedAssetInsert, DerivedAssetRenderInsert};
+use crate::catalog::{AssetKind, Catalog, FileAsset};
 use crate::image_render::{
     basic_png_export_recipe, premium_png_export_recipe, render_image_to_file, RenderLimits,
-    RenderPurpose, RenderRequest, RenderedImage,
+    RenderPurpose, RenderRequest,
 };
 use crate::path_safety::safe_path_component;
+use crate::scanner::{attach_files_to_artwork, AttachMode};
 use crate::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -39,8 +40,9 @@ pub fn create_png_derivative(
     artwork_id: i64,
     source_file_asset_id: i64,
     export_root: &Path,
+    cache_dir: &Path,
     variant: PngExportVariant,
-) -> Result<DerivedAsset> {
+) -> Result<FileAsset> {
     if export_root.as_os_str().is_empty() || !export_root.is_absolute() {
         return Err(AppError::Message(
             "Export destination must be an absolute folder path".to_string(),
@@ -71,24 +73,21 @@ pub fn create_png_derivative(
         },
         limits: RenderLimits::default(),
     })?;
-    let derived = catalog.add_derived_asset(
+    let detail = attach_files_to_artwork(
+        catalog,
         artwork_id,
-        DerivedAssetInsert {
-            source_file_asset_id: Some(source_file_asset_id),
-            derivative_type: "png_export",
-            format: &rendered.format,
-            path: &rendered.path,
-            width: i64::from(rendered.width),
-            height: i64::from(rendered.height),
-            image_role: Some(variant.image_role()),
-        },
+        std::slice::from_ref(&rendered.path),
+        cache_dir,
+        AttachMode::Copy,
     )?;
-    catalog.add_derived_asset_render(render_metadata_insert(
-        derived.id,
-        variant.render_purpose(),
-        &rendered,
-    ))?;
-    Ok(derived)
+    let file_asset_id = detail
+        .file_assets
+        .iter()
+        .find(|asset| asset.original_path == rendered.path)
+        .map(|asset| asset.id)
+        .ok_or_else(|| AppError::Message("PNG export was created but not attached".to_string()))?;
+    catalog.update_image_role(AssetKind::File, file_asset_id, Some(variant.image_role()))?;
+    catalog.file_asset(file_asset_id)
 }
 
 fn is_renderable_png_export_source(extension: &str) -> bool {
@@ -108,28 +107,4 @@ fn unique_export_path(folder: &Path, canonical_id: &str, title: &str) -> PathBuf
         index += 1;
     }
     candidate
-}
-
-fn render_metadata_insert(
-    derived_asset_id: i64,
-    purpose: RenderPurpose,
-    rendered: &RenderedImage,
-) -> DerivedAssetRenderInsert {
-    DerivedAssetRenderInsert {
-        derived_asset_id,
-        purpose: purpose.as_str().to_string(),
-        recipe_key: rendered.recipe_key.clone(),
-        recipe_json: rendered.recipe_json.clone(),
-        source_path: rendered.source_fingerprint.path.clone(),
-        source_size_bytes: rendered.source_fingerprint.size_bytes,
-        source_modified_at: rendered.source_fingerprint.modified_at.clone(),
-        source_width: i64::from(rendered.source_fingerprint.width),
-        source_height: i64::from(rendered.source_fingerprint.height),
-        output_width: i64::from(rendered.width),
-        output_height: i64::from(rendered.height),
-        output_size_bytes: rendered.bytes,
-        renderer: rendered.renderer.clone(),
-        renderer_version: rendered.renderer_version.clone(),
-        renderer_options_json: rendered.renderer_options_json.clone(),
-    }
 }

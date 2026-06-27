@@ -26,9 +26,8 @@ pub use consistency::{
     CatalogConsistencyCheck, CatalogConsistencyReport, MissingArtworkFile, MissingArtworkManifest,
 };
 use delete::{
-    delete_candidate_for_derived_asset, file_source_kind_delete_reason, move_path_to_trash,
-    pretrash_managed_files_or_abort, push_unique_delete_candidate,
-    trash_delete_candidate_if_exists, trash_file_if_exists,
+    file_source_kind_delete_reason, move_path_to_trash, pretrash_managed_files_or_abort,
+    push_unique_delete_candidate, trash_delete_candidate_if_exists, trash_file_if_exists,
 };
 pub use manifests::{
     ManifestProjectionIssue, ManifestProjector, ManifestRepairReport, ManifestRepairService,
@@ -1059,18 +1058,22 @@ impl Catalog {
             if !path_is_at_or_under(&artwork_folder, &file_path) || !file_path.exists() {
                 continue;
             }
-            if file.file_kind == "derivative" && file.width.is_some() && file.height.is_some() {
+            let derivative_type = app_extension_string(&file.extensions, "derivative_type");
+            if file.file_kind == "derivative"
+                && file.width.is_some()
+                && file.height.is_some()
+                && derivative_type.as_deref() != Some("png_export")
+            {
                 let source_file_asset_id = app_extension_string(&file.extensions, "source_file_id")
                     .and_then(|source_file_id| {
                         source_file_ids_by_manifest_id.get(&source_file_id).copied()
                     });
+                let image_role = manifest_image_role(file.image_role.as_deref(), &file.extensions);
                 let derivative = self.add_derived_asset_session_only(
                     artwork_id,
                     DerivedAssetInsert {
                         source_file_asset_id,
-                        derivative_type: app_extension_string(&file.extensions, "derivative_type")
-                            .as_deref()
-                            .unwrap_or("oaa_derivative"),
+                        derivative_type: derivative_type.as_deref().unwrap_or("oaa_derivative"),
                         format: file
                             .format
                             .as_deref()
@@ -1079,7 +1082,7 @@ impl Catalog {
                         path: &file_path,
                         width: file.width.unwrap_or_default(),
                         height: file.height.unwrap_or_default(),
-                        image_role: file.image_role.as_deref(),
+                        image_role,
                     },
                 )?;
                 self.save_manifest_extension_blocks(
@@ -1089,6 +1092,7 @@ impl Catalog {
                 )?;
                 imported += 1;
             } else {
+                let image_role = manifest_image_role(file.image_role.as_deref(), &file.extensions);
                 let file_asset_id = self.upsert_file_asset_with_known_metadata(
                     artwork_id,
                     FileAssetKnownMetadataInsert {
@@ -1107,7 +1111,7 @@ impl Catalog {
                         },
                     },
                 )?;
-                if let Some(image_role) = file.image_role.as_deref() {
+                if let Some(image_role) = image_role {
                     self.update_file_asset_image_role_session_only(
                         file_asset_id,
                         Some(image_role),
@@ -1954,10 +1958,7 @@ impl Catalog {
                 }
             }
             AssetKind::Derived => {
-                let asset = self.derived_asset(asset_id)?;
-                if let Some(candidate) = delete_candidate_for_derived_asset(&asset) {
-                    preview.files_to_trash.push(candidate);
-                }
+                self.derived_asset(asset_id)?;
             }
         }
         Ok(preview)
@@ -2136,11 +2137,6 @@ impl Catalog {
         let detail = self.artwork_detail(artwork_id)?;
         for asset in &detail.file_assets {
             if let Some(candidate) = self.delete_candidate_for_file_asset(asset)? {
-                push_unique_delete_candidate(&mut preview.files_to_trash, candidate);
-            }
-        }
-        for asset in &detail.derived_assets {
-            if let Some(candidate) = delete_candidate_for_derived_asset(asset) {
                 push_unique_delete_candidate(&mut preview.files_to_trash, candidate);
             }
         }
@@ -2482,11 +2478,6 @@ impl Catalog {
                 file_candidates.push(candidate);
             }
         }
-        let export_candidates = detail
-            .derived_assets
-            .iter()
-            .filter_map(delete_candidate_for_derived_asset)
-            .collect::<Vec<_>>();
         let cache_paths = detail
             .derived_assets
             .iter()
@@ -2502,7 +2493,7 @@ impl Catalog {
             self.rewrite_gallery_manifest(gallery.id)?;
             self.rewrite_collections_for_gallery(gallery.id)?;
         }
-        for candidate in file_candidates.into_iter().chain(export_candidates) {
+        for candidate in file_candidates {
             if !path_is_covered_by_bulk_trash(bulk_trash_root, &candidate.path) {
                 trash_file_if_exists(&candidate.path, trash_file, result);
             }
@@ -3571,10 +3562,6 @@ impl Catalog {
                 SELECT COUNT(*)
                 FROM file_asset f
                 WHERE f.artwork_id = a.id
-              ) + (
-                SELECT COUNT(*)
-                FROM derived_asset export
-                WHERE export.artwork_id = a.id AND export.derivative_type = 'png_export'
               ) AS file_count,
               a.artwork_manifest_path
             FROM artwork a
@@ -3612,6 +3599,32 @@ impl Catalog {
         collection_id: i64,
     ) -> Result<Vec<(i64, i64, PathBuf)>> {
         self.file_assets_missing_cache_derivative_for_collection(collection_id, "thumbnail")
+    }
+
+    pub(crate) fn file_assets_for_collection_cache_derivatives(
+        &self,
+        collection_id: i64,
+    ) -> Result<Vec<(i64, i64, PathBuf)>> {
+        let conn = self.lock()?;
+        let mut statement = conn.prepare(
+            r#"
+            SELECT DISTINCT fa.artwork_id, fa.id, fa.current_path
+            FROM file_asset fa
+            JOIN gallery_artwork ga ON ga.artwork_id = fa.artwork_id
+            JOIN collection_gallery cg ON cg.gallery_id = ga.gallery_id
+            WHERE cg.collection_id = ?1
+            ORDER BY fa.artwork_id, fa.is_primary DESC, fa.display_order, fa.id
+            "#,
+        )?;
+        let rows = statement.query_map(params![collection_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                PathBuf::from(row.get::<_, String>(2)?),
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AppError::from)
     }
 
     pub(crate) fn file_assets_missing_preview_for_collection(
@@ -3840,10 +3853,6 @@ impl Catalog {
                     SELECT COUNT(*)
                     FROM file_asset f
                     WHERE f.artwork_id = a.id
-                  ) + (
-                    SELECT COUNT(*)
-                    FROM derived_asset export
-                    WHERE export.artwork_id = a.id AND export.derivative_type = 'png_export'
                   ) AS file_count,
                   a.artwork_manifest_path
                 FROM artwork a
@@ -4421,6 +4430,48 @@ impl Catalog {
         self.add_derived_asset_with_manifest_rewrite(artwork_id, insert, false)
     }
 
+    pub(crate) fn add_derived_asset_cache_rows_session_only(
+        &self,
+        rows: &[DerivedAssetCacheRow],
+    ) -> Result<usize> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let now = Utc::now().to_rfc3339();
+        let mut conn = self.lock()?;
+        let transaction = conn.transaction()?;
+        {
+            let mut statement = transaction.prepare(
+                "INSERT INTO derived_asset
+                 (artwork_id, source_file_asset_id, derivative_type, format, path, width, height, image_role, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)
+                 ON CONFLICT(path) DO UPDATE SET
+                   artwork_id = excluded.artwork_id,
+                   source_file_asset_id = excluded.source_file_asset_id,
+                   derivative_type = excluded.derivative_type,
+                   format = excluded.format,
+                   width = excluded.width,
+                   height = excluded.height,
+                   image_role = excluded.image_role,
+                   created_at = excluded.created_at",
+            )?;
+            for row in rows {
+                statement.execute(params![
+                    row.artwork_id,
+                    row.source_file_asset_id,
+                    &row.derivative_type,
+                    &row.format,
+                    row.path.to_string_lossy(),
+                    row.width,
+                    row.height,
+                    &now,
+                ])?;
+            }
+        }
+        transaction.commit()?;
+        Ok(rows.len())
+    }
+
     fn add_derived_asset_with_manifest_rewrite(
         &self,
         artwork_id: i64,
@@ -4995,14 +5046,12 @@ impl Catalog {
     where
         F: FnMut(&Path) -> std::result::Result<(), String>,
     {
-        let mut file_candidate = None;
-        let mut derived_candidate = None;
         let mut result = DeleteResult::default();
         let artwork_id: i64 = match asset_kind {
             AssetKind::File => {
                 let asset = self.file_asset(asset_id)?;
                 let artwork_id = asset.artwork_id;
-                file_candidate = self.delete_candidate_for_file_asset(&asset)?;
+                let file_candidate = self.delete_candidate_for_file_asset(&asset)?;
                 if let Some(candidate) = file_candidate.as_ref() {
                     trash_delete_candidate_if_exists(candidate, &mut trash_file, &mut result);
                 }
@@ -5036,22 +5085,11 @@ impl Catalog {
             AssetKind::Derived => {
                 let asset = self.derived_asset(asset_id)?;
                 let artwork_id = asset.artwork_id;
-                derived_candidate = delete_candidate_for_derived_asset(&asset);
-                if let Some(candidate) = derived_candidate.as_ref() {
-                    trash_delete_candidate_if_exists(candidate, &mut trash_file, &mut result);
-                }
-                if !result.trash_failures.is_empty() {
-                    return Ok(DeleteArtworkFileResult {
-                        detail: self.artwork_detail(artwork_id)?,
-                        result,
-                    });
-                }
                 let conn = self.lock()?;
                 conn.execute("DELETE FROM derived_asset WHERE id = ?1", params![asset_id])?;
                 artwork_id
             }
         };
-        let _ = (file_candidate, derived_candidate);
         if self.artwork_manifest_path(artwork_id)?.is_some() {
             self.ensure_artwork_manifest(artwork_id)?;
         }
@@ -5103,10 +5141,6 @@ impl Catalog {
                 SELECT COUNT(*)
                 FROM file_asset f
                 WHERE f.artwork_id = a.id
-              ) + (
-                SELECT COUNT(*)
-                FROM derived_asset export
-                WHERE export.artwork_id = a.id AND export.derivative_type = 'png_export'
               ) AS file_count,
               a.artwork_manifest_path
             FROM artwork a
@@ -6437,6 +6471,18 @@ fn portable_image_role(
         }
         other => other.map(str::to_string),
     }
+}
+
+fn manifest_image_role<'a>(
+    image_role: Option<&'a str>,
+    extensions: &'a BTreeMap<String, serde_json::Value>,
+) -> Option<&'a str> {
+    image_role.or_else(|| {
+        extensions
+            .get("com.comicartfans")
+            .and_then(|extension| extension.get("format_tier"))
+            .and_then(serde_json::Value::as_str)
+    })
 }
 
 fn media_type_for_extension(extension: &str) -> Option<&'static str> {
