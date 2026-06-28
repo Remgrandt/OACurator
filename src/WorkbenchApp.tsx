@@ -214,11 +214,22 @@ type TrashFailureReport = {
   trashedFiles: DeleteFilePreview[];
   failures: DeleteTrashFailure[];
 };
+type UpdateDialogSource = "manual" | "startup";
 type UpdateDialogState =
   | { state: "checking" }
   | { state: "none" }
-  | { state: "available"; update: AppUpdateInfo; progress: AppUpdateProgress | null }
-  | { state: "installing"; update: AppUpdateInfo; progress: AppUpdateProgress | null }
+  | {
+      state: "available";
+      update: AppUpdateInfo;
+      progress: AppUpdateProgress | null;
+      source: UpdateDialogSource;
+    }
+  | {
+      state: "installing";
+      update: AppUpdateInfo;
+      progress: AppUpdateProgress | null;
+      source: UpdateDialogSource;
+    }
   | { state: "error"; message: string };
 type SniktUploadPrefillUrlRequest = {
   artwork_id: number;
@@ -275,6 +286,7 @@ const DEFAULT_APP_PREFERENCES: AppPreferences = {
   artwork_id_label_preference: "oac",
   theme: "dracula",
   startup_behavior: "reopen_last",
+  auto_check_updates: true,
   default_workspace_root: "",
   raremarq_csv_export_scope: "untracked",
   raremarq_csv_url_mode: "generic_url",
@@ -453,6 +465,7 @@ function WorkbenchApp() {
   const [updateDialog, setUpdateDialog] = useState<UpdateDialogState | null>(null);
   const [workspaceCommandInFlight, setWorkspaceCommandInFlight] =
     useState<WorkspaceCommandMode | null>(null);
+  const startupUpdateDecisionRef = useRef<((shouldContinueStartup: boolean) => void) | null>(null);
   const workspaceCommandInitialFocusRef = useRef<HTMLInputElement | null>(null);
   const renameCommitInFlightRef = useRef(false);
   const selectedArtworkIdRef = useRef<number | null>(null);
@@ -1212,6 +1225,8 @@ function WorkbenchApp() {
     const fallbackRoot = await loadDefaultWorkspaceRoot();
     const loadedPreferences = await loadAppPreferences(fallbackRoot);
     applyAppPreferences(loadedPreferences);
+    const shouldContinueStartup = await runStartupUpdateCheck(loadedPreferences);
+    if (!shouldContinueStartup) return;
     await loadWorkspace({
       resetTree: true,
       startupBehavior: loadedPreferences.startup_behavior,
@@ -1226,6 +1241,28 @@ function WorkbenchApp() {
     } catch {
       return normalizeAppPreferences(null, fallbackRoot);
     }
+  }
+
+  async function runStartupUpdateCheck(preferences: AppPreferences) {
+    if (!preferences.auto_check_updates) return true;
+    try {
+      const update = await checkForAppUpdate();
+      if (!update) return true;
+      setUpdateDialog({ state: "available", update, progress: null, source: "startup" });
+      setStatus(`Update ${update.version} available`);
+      return await new Promise<boolean>((resolve) => {
+        startupUpdateDecisionRef.current = resolve;
+      });
+    } catch {
+      return true;
+    }
+  }
+
+  function resolveStartupUpdateCheck(shouldContinueStartup: boolean) {
+    const resolve = startupUpdateDecisionRef.current;
+    if (!resolve) return;
+    startupUpdateDecisionRef.current = null;
+    resolve(shouldContinueStartup);
   }
 
   function applyAppPreferences(preferences: AppPreferences) {
@@ -1284,6 +1321,27 @@ function WorkbenchApp() {
     value: AppPreferences[K],
   ) {
     setPreferencesDraft((current) => (current ? { ...current, [key]: value } : current));
+  }
+
+  function updateAutoCheckUpdatesPreference(autoCheckUpdates: boolean) {
+    const previousPreferences = appPreferences;
+    const nextPreferences = {
+      ...previousPreferences,
+      auto_check_updates: autoCheckUpdates,
+    };
+    applyAppPreferences(nextPreferences);
+    setPreferencesDraft((current) =>
+      current ? { ...current, auto_check_updates: autoCheckUpdates } : current,
+    );
+    void persistAppPreferences(nextPreferences).catch((caught) => {
+      applyAppPreferences(previousPreferences);
+      setPreferencesDraft((current) =>
+        current
+          ? { ...current, auto_check_updates: previousPreferences.auto_check_updates }
+          : current,
+      );
+      setError(errorMessage(caught));
+    });
   }
 
   async function pickDefaultWorkspaceRoot() {
@@ -2525,7 +2583,7 @@ function WorkbenchApp() {
         setStatus("OA Curator is up to date");
         return;
       }
-      setUpdateDialog({ state: "available", update, progress: null });
+      setUpdateDialog({ state: "available", update, progress: null, source: "manual" });
       setStatus(`Update ${update.version} available`);
     } catch (caught) {
       const message = errorMessage(caught);
@@ -2562,11 +2620,15 @@ function WorkbenchApp() {
     return null;
   }
 
-  async function installSelectedUpdate(update: AppUpdateInfo) {
+  async function installSelectedUpdate(
+    update: AppUpdateInfo,
+    source: UpdateDialogSource = "manual",
+  ) {
     const blockedReason = updateInstallBlockedReason();
     if (blockedReason) {
       setStatus("Update install blocked");
       setUpdateDialog({ state: "error", message: blockedReason });
+      if (source === "startup") resolveStartupUpdateCheck(true);
       return;
     }
 
@@ -2579,6 +2641,7 @@ function WorkbenchApp() {
     );
     if (!confirmed) {
       setStatus("Update install canceled");
+      if (source === "startup") resolveStartupUpdateCheck(true);
       return;
     }
 
@@ -2587,21 +2650,31 @@ function WorkbenchApp() {
       const message = "Metadata save failed; update install was not started.";
       setStatus("Update install blocked");
       setUpdateDialog({ state: "error", message });
+      if (source === "startup") resolveStartupUpdateCheck(true);
       return;
     }
 
-    setUpdateDialog({ state: "installing", update, progress: null });
+    setUpdateDialog({ state: "installing", update, progress: null, source });
     setStatus(`Installing update ${update.version}`);
     try {
       await installAppUpdate(update, (progress) => {
-        setUpdateDialog({ state: "installing", update, progress });
+        setUpdateDialog({ state: "installing", update, progress, source });
       });
+      if (source === "startup") resolveStartupUpdateCheck(false);
     } catch (caught) {
       const message = errorMessage(caught);
       setUpdateDialog({ state: "error", message });
       setError(message);
       setStatus("Update install failed");
+      if (source === "startup") resolveStartupUpdateCheck(true);
     }
+  }
+
+  function closeUpdateDialog() {
+    if (!updateDialog || updateDialog.state === "installing") return;
+    const source = updateDialog.state === "available" ? updateDialog.source : null;
+    setUpdateDialog(null);
+    if (source === "startup") resolveStartupUpdateCheck(true);
   }
 
   async function createPngExport() {
@@ -3064,7 +3137,7 @@ function WorkbenchApp() {
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();
-              setUpdateDialog(null);
+              closeUpdateDialog();
             }
           }}
         >
@@ -3103,23 +3176,38 @@ function WorkbenchApp() {
                 </div>
               )}
               {updateDialog.state === "available" && (
-                <p className="update-warning">
-                  OA Curator will close to finish installing this update on Windows.
-                </p>
+                <>
+                  <p className="update-warning">
+                    OA Curator will close to finish installing this update on Windows.
+                  </p>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={appPreferences.auto_check_updates}
+                      onChange={(event) =>
+                        updateAutoCheckUpdatesPreference(event.currentTarget.checked)
+                      }
+                    />
+                    Automatically check for updates
+                  </label>
+                </>
               )}
             </>
           )}
           {updateDialog.state === "error" && <p>{updateDialog.message}</p>}
           <div className="dialog-actions">
             {updateDialog.state === "available" && (
-              <button type="button" onClick={() => void installSelectedUpdate(updateDialog.update)}>
+              <button
+                type="button"
+                onClick={() => void installSelectedUpdate(updateDialog.update, updateDialog.source)}
+              >
                 Install Update
               </button>
             )}
             <button
               type="button"
               disabled={updateDialog.state === "installing"}
-              onClick={() => setUpdateDialog(null)}
+              onClick={closeUpdateDialog}
             >
               {updateDialog.state === "installing" ? "Installing..." : "Close"}
             </button>
@@ -3255,6 +3343,16 @@ function WorkbenchApp() {
                   <option value="show_start_window">Show Start Window</option>
                   <option value="start_empty">Start empty</option>
                 </select>
+              </label>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  checked={preferencesDraft.auto_check_updates}
+                  onChange={(event) =>
+                    updatePreferencesDraft("auto_check_updates", event.currentTarget.checked)
+                  }
+                />
+                Automatically check for updates
               </label>
               <label>
                 Default workspace root
@@ -6633,6 +6731,10 @@ function normalizeAppPreferences(value: unknown, fallbackRoot: string): AppPrefe
     startup_behavior: isStartupBehaviorPreference(candidate["startup_behavior"])
       ? candidate["startup_behavior"]
       : DEFAULT_APP_PREFERENCES.startup_behavior,
+    auto_check_updates:
+      typeof candidate["auto_check_updates"] === "boolean"
+        ? candidate["auto_check_updates"]
+        : DEFAULT_APP_PREFERENCES.auto_check_updates,
     default_workspace_root:
       typeof candidate["default_workspace_root"] === "string" &&
       candidate["default_workspace_root"].trim()

@@ -538,6 +538,7 @@ pub struct AppPreferences {
     pub artwork_id_label_preference: String,
     pub theme: String,
     pub startup_behavior: String,
+    pub auto_check_updates: bool,
     pub default_workspace_root: String,
     pub raremarq_csv_export_scope: String,
     pub raremarq_csv_url_mode: String,

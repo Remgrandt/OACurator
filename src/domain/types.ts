@@ -531,6 +531,7 @@ export type AppPreferences = {
   artwork_id_label_preference: ArtworkIdLabelPreference;
   theme: ThemePreference;
   startup_behavior: StartupBehaviorPreference;
+  auto_check_updates: boolean;
   default_workspace_root: string;
   raremarq_csv_export_scope: RaremarqCsvExportScope;
   raremarq_csv_url_mode: RaremarqCsvUrlMode;

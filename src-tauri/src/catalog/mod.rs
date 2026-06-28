@@ -43,6 +43,7 @@ const DEFAULT_PNG_EXPORT_VARIANT_SETTING: &str = "default_png_export_variant";
 const DEFAULT_PROVIDER_FOCUS_SETTING: &str = "default_provider_focus";
 const THEME_PREFERENCE_SETTING: &str = "theme";
 const STARTUP_BEHAVIOR_SETTING: &str = "startup_behavior";
+const AUTO_CHECK_UPDATES_SETTING: &str = "auto_check_updates";
 const DEFAULT_WORKSPACE_ROOT_SETTING: &str = "default_workspace_root";
 const RAREMARQ_CSV_EXPORT_SCOPE_SETTING: &str = "raremarq_csv_export_scope";
 const RAREMARQ_CSV_URL_MODE_SETTING: &str = "raremarq_csv_url_mode";
@@ -380,6 +381,13 @@ impl Catalog {
                 STARTUP_BEHAVIOR_SETTING,
                 "reopen_last",
             )?,
+            auto_check_updates: setting_or_default_locked(
+                &conn,
+                AUTO_CHECK_UPDATES_SETTING,
+                "true",
+            )?
+            .trim()
+            .eq_ignore_ascii_case("true"),
             default_workspace_root: setting_or_default_locked(
                 &conn,
                 DEFAULT_WORKSPACE_ROOT_SETTING,
@@ -450,6 +458,15 @@ impl Catalog {
         )?;
         set_setting_locked(&conn, THEME_PREFERENCE_SETTING, &theme)?;
         set_setting_locked(&conn, STARTUP_BEHAVIOR_SETTING, &startup_behavior)?;
+        set_setting_locked(
+            &conn,
+            AUTO_CHECK_UPDATES_SETTING,
+            if preferences.auto_check_updates {
+                "true"
+            } else {
+                "false"
+            },
+        )?;
         set_setting_locked(
             &conn,
             DEFAULT_WORKSPACE_ROOT_SETTING,
