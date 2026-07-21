@@ -61,3 +61,36 @@ pub async fn close_collection_command(
     })
     .await
 }
+
+#[tauri::command]
+pub async fn unreferenced_artworks_command(
+    state: tauri::State<'_, AppState>,
+    collection_id: i64,
+) -> std::result::Result<UnreferencedArtworkReport, String> {
+    let catalog = state.catalog.clone();
+    catalog_blocking("Check unreferenced Artwork", move || {
+        catalog
+            .unreferenced_artworks(collection_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn import_unreferenced_artworks_command(
+    state: tauri::State<'_, AppState>,
+    request: ImportUnreferencedArtworksRequest,
+) -> std::result::Result<WorkspaceState, String> {
+    let catalog = state.catalog.clone();
+    catalog_blocking("Import unreferenced Artwork", move || {
+        let paths = request
+            .manifest_paths
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        catalog
+            .import_unreferenced_artworks(request.collection_id, request.gallery_id, &paths)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}

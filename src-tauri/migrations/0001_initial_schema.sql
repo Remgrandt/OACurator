@@ -232,8 +232,12 @@ CREATE TABLE IF NOT EXISTS snikt_metadata (
 
 CREATE TABLE IF NOT EXISTS file_operation_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  artwork_id INTEGER NOT NULL REFERENCES artwork(id) ON DELETE CASCADE,
-  file_asset_id INTEGER REFERENCES file_asset(id) ON DELETE SET NULL,
+  artwork_id INTEGER,
+  file_asset_id INTEGER,
+  collection_stable_id TEXT,
+  artwork_canonical_id TEXT NOT NULL,
+  artwork_manifest_path TEXT,
+  file_asset_path TEXT,
   old_path TEXT NOT NULL,
   new_path TEXT NOT NULL,
   result TEXT NOT NULL,
@@ -243,11 +247,12 @@ CREATE TABLE IF NOT EXISTS file_operation_log (
 
 CREATE TABLE IF NOT EXISTS manifest_projection_state (
   owner_kind TEXT NOT NULL,
-  owner_id INTEGER NOT NULL,
+  owner_stable_id TEXT NOT NULL,
+  owner_id INTEGER,
   manifest_path TEXT NOT NULL,
   error TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  PRIMARY KEY (owner_kind, owner_id)
+  PRIMARY KEY (owner_kind, manifest_path)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS artwork_search_fts

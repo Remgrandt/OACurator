@@ -44,6 +44,4 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-
-[dev-dependencies]
 tempfile = "3"

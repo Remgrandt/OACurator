@@ -1,8 +1,9 @@
 use crate::image_metadata::{read_image_metadata, ImageMetadata};
 use crate::manifest::{
-    read_json_manifest, write_json_manifest, ArtworkArtistCredit, ArtworkFileManifest,
-    ArtworkManifest, ArtworkManifestReference, ArtworkPrivateMetadata, ArtworkPublicMetadata,
-    CollectionManifest, ExternalLinkManifest, GalleryManifest, ManifestReference, SCHEMA_VERSION,
+    read_json_manifest, staged_json_manifest, write_json_manifest, ArtworkArtistCredit,
+    ArtworkFileManifest, ArtworkManifest, ArtworkManifestReference, ArtworkPrivateMetadata,
+    ArtworkPublicMetadata, CollectionManifest, ExternalLinkManifest, GalleryManifest,
+    ManifestReference, SCHEMA_VERSION,
 };
 use crate::path_safety::{expand_user_path, validate_file_name_component};
 use crate::{AppError, Result};
@@ -21,6 +22,7 @@ mod consistency;
 mod delete;
 mod manifests;
 mod models;
+mod orphans;
 
 pub use consistency::{
     CatalogConsistencyCheck, CatalogConsistencyReport, MissingArtworkFile, MissingArtworkManifest,
@@ -33,6 +35,9 @@ pub use manifests::{
     ManifestProjectionIssue, ManifestProjector, ManifestRepairReport, ManifestRepairService,
 };
 pub use models::*;
+pub use orphans::{
+    UnreferencedArtworkCandidate, UnreferencedArtworkDuplicate, UnreferencedArtworkReport,
+};
 
 const RECENT_COLLECTIONS_SETTING: &str = "recent_collections_json";
 const RECENT_COLLECTION_LIMIT: usize = 12;
@@ -183,6 +188,7 @@ impl CollectionOpenProfiler {
 pub(crate) struct CatalogBatchTransaction<'a> {
     catalog: &'a Catalog,
     committed: bool,
+    nested: bool,
 }
 
 pub(crate) struct CanonicalIdAllocator {
@@ -206,29 +212,46 @@ impl CanonicalIdAllocator {
         Ok(Self { next_number })
     }
 
-    fn next_id(&mut self) -> String {
-        let id = format!("OAC-{:05}", self.next_number);
-        self.next_number += 1;
-        id
+    fn next_id_for_gallery(&mut self, gallery_manifest_path: &Path) -> String {
+        loop {
+            let id = format!("OAC-{:05}", self.next_number);
+            self.next_number += 1;
+            let manifest_path = default_artwork_manifest_path(gallery_manifest_path, &id);
+            let artwork_folder = manifest_path.parent().unwrap_or(&manifest_path);
+            if !artwork_folder.exists() && !manifest_path.exists() {
+                return id;
+            }
+        }
     }
 }
 
 impl<'a> CatalogBatchTransaction<'a> {
     pub(crate) fn begin(catalog: &'a Catalog) -> Result<Self> {
-        {
+        let nested = {
             let conn = catalog.lock()?;
-            conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
-        }
+            let nested = !conn.is_autocommit();
+            if nested {
+                conn.execute_batch("SAVEPOINT oac_nested_batch;")?;
+            } else {
+                conn.execute_batch("BEGIN IMMEDIATE TRANSACTION;")?;
+            }
+            nested
+        };
         Ok(Self {
             catalog,
             committed: false,
+            nested,
         })
     }
 
     pub(crate) fn commit(mut self) -> Result<()> {
         {
             let conn = self.catalog.lock()?;
-            conn.execute_batch("COMMIT;")?;
+            if self.nested {
+                conn.execute_batch("RELEASE SAVEPOINT oac_nested_batch;")?;
+            } else {
+                conn.execute_batch("COMMIT;")?;
+            }
         }
         self.committed = true;
         Ok(())
@@ -239,7 +262,14 @@ impl Drop for CatalogBatchTransaction<'_> {
     fn drop(&mut self) {
         if !self.committed {
             if let Ok(conn) = self.catalog.lock() {
-                let _ = conn.execute_batch("ROLLBACK;");
+                if self.nested {
+                    let _ = conn.execute_batch(
+                        "ROLLBACK TO SAVEPOINT oac_nested_batch;
+                         RELEASE SAVEPOINT oac_nested_batch;",
+                    );
+                } else {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                }
             }
         }
     }
@@ -288,6 +318,7 @@ impl Catalog {
     pub fn init(&self) -> Result<()> {
         let conn = self.lock()?;
         conn.execute_batch(include_str!("../../migrations/0001_initial_schema.sql"))?;
+        migrate_durable_diagnostic_tables(&conn)?;
         add_column_if_missing(&conn, "external_link", "extensions_json", "TEXT")?;
         add_column_if_missing(&conn, "artwork", "caf_csv_image_link", "TEXT")?;
         add_column_if_missing(&conn, "artwork", "caf_csv_added_to_caf", "TEXT")?;
@@ -307,8 +338,6 @@ impl Catalog {
         let conn = self.lock()?;
         conn.execute_batch(
             r#"
-            DELETE FROM file_operation_log;
-            DELETE FROM manifest_projection_state;
             DELETE FROM artwork_search_fts;
             DELETE FROM file_asset_external_link;
             DELETE FROM oaa_extension_block;
@@ -1744,8 +1773,12 @@ impl Catalog {
         }
         let _ = self.collection_summary(collection_id)?;
         let _ = self.gallery_summary(source_gallery_id)?;
-        let _ = self.artwork_summary(source_artwork_id)?;
-        let _ = self.artwork_summary(target_artwork_id)?;
+        let source_artwork = self.artwork_summary(source_artwork_id)?;
+        let target_artwork = self.artwork_summary(target_artwork_id)?;
+        let target_manifest_path = target_artwork
+            .manifest_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string());
         let source_manifest_path = self.artwork_manifest_path(source_artwork_id)?;
         {
             let conn = self.lock()?;
@@ -1842,8 +1875,19 @@ impl Catalog {
                 params![target_artwork_id, source_artwork_id],
             )?;
             tx.execute(
-                "UPDATE file_operation_log SET artwork_id = ?1 WHERE artwork_id = ?2",
-                params![target_artwork_id, source_artwork_id],
+                "UPDATE file_operation_log
+                 SET artwork_id = ?1,
+                     artwork_canonical_id = ?2,
+                     artwork_manifest_path = ?3
+                 WHERE artwork_canonical_id = ?4
+                    OR artwork_id = ?5",
+                params![
+                    target_artwork_id,
+                    target_artwork.canonical_id,
+                    target_manifest_path,
+                    source_artwork.canonical_id,
+                    source_artwork_id
+                ],
             )?;
             tx.execute(
                 "DELETE FROM gallery_artwork WHERE artwork_id = ?1",
@@ -2609,10 +2653,10 @@ impl Catalog {
         let gallery = self.gallery_summary(gallery_id)?;
         let title = normalized_name(title, "Untitled Artwork");
         let now = Utc::now().to_rfc3339();
+        let batch_transaction = CatalogBatchTransaction::begin(self)?;
         let id = {
             let conn = self.lock()?;
-            cleanup_unlinked_artworks_locked(&conn)?;
-            let canonical_id = next_canonical_id_locked(&conn)?;
+            let canonical_id = next_canonical_id_locked(&conn, &gallery.manifest_path)?;
             let path = manifest_path.map(Path::to_path_buf).unwrap_or_else(|| {
                 default_artwork_manifest_path(&gallery.manifest_path, &canonical_id)
             });
@@ -2634,8 +2678,58 @@ impl Catalog {
             )?;
             conn.last_insert_rowid()
         };
-        self.link_artwork_to_gallery(gallery_id, id)?;
-        self.artwork_summary(id)
+        self.link_artwork_to_gallery_session_only(gallery_id, id)?;
+        self.set_setting("active_gallery_id", &gallery_id.to_string())?;
+        let artwork = self.artwork_summary(id)?;
+        let (artwork_manifest_path, artwork_manifest) =
+            ManifestProjector::new(self).artwork_manifest_for_write(id)?;
+        let (gallery_manifest_path, gallery_manifest) =
+            self.gallery_manifest_for_write(gallery_id)?;
+        let collection_manifests = self
+            .collections_for_gallery(gallery_id)?
+            .into_iter()
+            .map(|collection| self.collection_manifest_for_write(collection.id))
+            .collect::<Result<Vec<_>>>()?;
+
+        let staged_gallery = staged_json_manifest(&gallery_manifest_path, &gallery_manifest)?;
+        let staged_collections = collection_manifests
+            .iter()
+            .map(|(path, manifest)| staged_json_manifest(path, manifest))
+            .collect::<Result<Vec<_>>>()?;
+        let staged_artwork = staged_json_manifest(&artwork_manifest_path, &artwork_manifest)?;
+
+        staged_artwork.persist(false).map_err(|error| {
+            AppError::Message(format!(
+                "Artwork {} was not created. The runtime record was rolled back because its completed new manifest {} could not be installed without overwriting an existing file: {error}",
+                artwork.canonical_id,
+                artwork_manifest_path.display()
+            ))
+        })?;
+        if let Ok(mut counts) = self.manifest_rewrite_debug_counts.lock() {
+            counts.gallery += 1;
+        }
+        staged_gallery.persist(true).map_err(|error| {
+            AppError::Message(format!(
+                "Artwork {} was not exposed in the UI because Gallery persistence failed after {} was written. The runtime record was rolled back; OA Curator will offer this manifest for reconciliation next time the Collection opens: {error}",
+                artwork.canonical_id,
+                artwork_manifest_path.display()
+            ))
+        })?;
+        for staged_collection in staged_collections {
+            staged_collection.persist(true).map_err(|error| {
+                AppError::Message(format!(
+                    "Artwork {} was not exposed in the UI because Collection persistence failed after its Artwork and Gallery manifests were written. The runtime record was rolled back; OA Curator will offer the Artwork for reconciliation next time the Collection opens: {error}",
+                    artwork.canonical_id
+                ))
+            })?;
+        }
+        batch_transaction.commit().map_err(|error| {
+            AppError::Message(format!(
+                "Artwork {} was fully written to its Artwork, Gallery, and Collection manifests, but the runtime database commit failed. It was not exposed in the UI; reopen the Collection to load the durable record: {error}",
+                artwork.canonical_id
+            ))
+        })?;
+        Ok(artwork)
     }
 
     pub fn import_caf_artwork_in_gallery(
@@ -2684,7 +2778,7 @@ impl Catalog {
                 )?;
                 existing_id
             } else {
-                let canonical_id = next_canonical_id_locked(&conn)?;
+                let canonical_id = next_canonical_id_locked(&conn, &gallery.manifest_path)?;
                 let manifest_path =
                     default_artwork_manifest_path(&gallery.manifest_path, &canonical_id);
                 let path_string = manifest_path.to_string_lossy().to_string();
@@ -3032,7 +3126,7 @@ impl Catalog {
                 )?;
                 existing_id
             } else {
-                let canonical_id = next_canonical_id_locked(&conn)?;
+                let canonical_id = next_canonical_id_locked(&conn, &gallery.manifest_path)?;
                 let manifest_path =
                     default_artwork_manifest_path(&gallery.manifest_path, &canonical_id);
                 let path_string = manifest_path.to_string_lossy().to_string();
@@ -3135,7 +3229,7 @@ impl Catalog {
                 )?;
                 existing_id
             } else {
-                let canonical_id = next_canonical_id_locked(&conn)?;
+                let canonical_id = next_canonical_id_locked(&conn, &gallery.manifest_path)?;
                 let manifest_path =
                     default_artwork_manifest_path(&gallery.manifest_path, &canonical_id);
                 let path_string = manifest_path.to_string_lossy().to_string();
@@ -3989,6 +4083,14 @@ impl Catalog {
     }
 
     fn rewrite_collection_manifest(&self, collection_id: i64) -> Result<()> {
+        let (path, manifest) = self.collection_manifest_for_write(collection_id)?;
+        write_json_manifest(&path, &manifest)
+    }
+
+    fn collection_manifest_for_write(
+        &self,
+        collection_id: i64,
+    ) -> Result<(PathBuf, CollectionManifest)> {
         let collection = self.collection_summary(collection_id)?;
         let galleries = self.galleries_for_collection(collection_id)?;
         let mut artwork_by_id = BTreeMap::new();
@@ -4024,13 +4126,18 @@ impl Catalog {
                 .collect(),
             extensions: BTreeMap::new(),
         };
-        write_json_manifest(&collection.manifest_path, &manifest)
+        Ok((collection.manifest_path, manifest))
     }
 
     pub(crate) fn rewrite_gallery_manifest(&self, gallery_id: i64) -> Result<()> {
         if let Ok(mut counts) = self.manifest_rewrite_debug_counts.lock() {
             counts.gallery += 1;
         }
+        let (path, manifest) = self.gallery_manifest_for_write(gallery_id)?;
+        write_json_manifest(&path, &manifest)
+    }
+
+    fn gallery_manifest_for_write(&self, gallery_id: i64) -> Result<(PathBuf, GalleryManifest)> {
         let gallery = self.gallery_summary(gallery_id)?;
         let artworks = self.artworks_for_gallery(gallery_id)?;
         let manifest = GalleryManifest {
@@ -4049,7 +4156,7 @@ impl Catalog {
                 .collect(),
             extensions: gallery_extensions(&gallery),
         };
-        write_json_manifest(&gallery.manifest_path, &manifest)
+        Ok((gallery.manifest_path, manifest))
     }
 
     pub(crate) fn rewrite_collections_for_gallery(&self, gallery_id: i64) -> Result<()> {
@@ -5714,13 +5821,53 @@ impl Catalog {
         message: Option<&str>,
     ) -> Result<()> {
         let conn = self.lock()?;
+        let (artwork_canonical_id, artwork_manifest_path, collection_stable_id) = conn.query_row(
+            "SELECT
+                   COALESCE(a.artwork_stable_id, a.canonical_id),
+                   a.artwork_manifest_path,
+                   (
+                     SELECT c.stable_id
+                     FROM collection c
+                     JOIN collection_gallery cg ON cg.collection_id = c.id
+                     JOIN gallery_artwork ga ON ga.gallery_id = cg.gallery_id
+                     WHERE ga.artwork_id = a.id
+                     LIMIT 1
+                   )
+                 FROM artwork a
+                 WHERE a.id = ?1",
+            params![artwork_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )?;
+        let file_asset_path = file_asset_id
+            .map(|id| {
+                conn.query_row(
+                    "SELECT current_path FROM file_asset WHERE id = ?1",
+                    params![id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+            })
+            .transpose()?
+            .flatten();
         conn.execute(
             "INSERT INTO file_operation_log
-             (artwork_id, file_asset_id, old_path, new_path, result, message, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (artwork_id, file_asset_id, collection_stable_id, artwork_canonical_id,
+              artwork_manifest_path, file_asset_path, old_path, new_path, result, message,
+              created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 artwork_id,
                 file_asset_id,
+                collection_stable_id,
+                artwork_canonical_id,
+                artwork_manifest_path,
+                file_asset_path,
                 old_path.to_string_lossy().to_string(),
                 new_path.to_string_lossy().to_string(),
                 result,
@@ -5733,14 +5880,23 @@ impl Catalog {
 
     pub fn operation_logs_for_artwork(&self, artwork_id: i64) -> Result<Vec<OperationLog>> {
         let conn = self.lock()?;
+        let (canonical_id, manifest_path) = conn.query_row(
+            "SELECT COALESCE(artwork_stable_id, canonical_id), artwork_manifest_path
+             FROM artwork WHERE id = ?1",
+            params![artwork_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )?;
         let mut statement = conn.prepare(
             "SELECT id, artwork_id, file_asset_id, old_path, new_path, result, message, created_at
-             FROM file_operation_log WHERE artwork_id = ?1 ORDER BY id",
+             FROM file_operation_log
+             WHERE artwork_canonical_id = ?1
+                OR (?2 IS NOT NULL AND artwork_manifest_path = ?2)
+             ORDER BY id",
         )?;
-        let rows = statement.query_map(params![artwork_id], |row| {
+        let rows = statement.query_map(params![canonical_id, manifest_path], |row| {
             Ok(OperationLog {
                 id: row.get(0)?,
-                artwork_id: row.get(1)?,
+                artwork_id,
                 file_asset_id: row.get(2)?,
                 old_path: PathBuf::from(row.get::<_, String>(3)?),
                 new_path: PathBuf::from(row.get::<_, String>(4)?),
@@ -7716,15 +7872,6 @@ fn remove_empty_dir_if_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn cleanup_unlinked_artworks_locked(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute(
-        "DELETE FROM artwork
-         WHERE id NOT IN (SELECT artwork_id FROM gallery_artwork)",
-        [],
-    )?;
-    Ok(())
-}
-
 fn add_column_if_missing(
     conn: &Connection,
     table_name: &str,
@@ -7744,9 +7891,134 @@ fn add_column_if_missing(
     Ok(())
 }
 
-fn next_canonical_id_locked(conn: &Connection) -> rusqlite::Result<String> {
+fn migrate_durable_diagnostic_tables(conn: &Connection) -> Result<()> {
+    if !column_exists(conn, "file_operation_log", "artwork_canonical_id")? {
+        conn.execute_batch(
+            r#"
+            BEGIN IMMEDIATE;
+            ALTER TABLE file_operation_log RENAME TO file_operation_log_legacy;
+            CREATE TABLE file_operation_log (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              artwork_id INTEGER,
+              file_asset_id INTEGER,
+              collection_stable_id TEXT,
+              artwork_canonical_id TEXT NOT NULL,
+              artwork_manifest_path TEXT,
+              file_asset_path TEXT,
+              old_path TEXT NOT NULL,
+              new_path TEXT NOT NULL,
+              result TEXT NOT NULL,
+              message TEXT,
+              created_at TEXT NOT NULL
+            );
+            INSERT INTO file_operation_log (
+              id, artwork_id, file_asset_id, collection_stable_id, artwork_canonical_id,
+              artwork_manifest_path, file_asset_path, old_path, new_path, result, message,
+              created_at
+            )
+            SELECT
+              log.id,
+              log.artwork_id,
+              log.file_asset_id,
+              (
+                SELECT collection.stable_id
+                FROM collection
+                JOIN collection_gallery ON collection_gallery.collection_id = collection.id
+                JOIN gallery_artwork ON gallery_artwork.gallery_id = collection_gallery.gallery_id
+                WHERE gallery_artwork.artwork_id = log.artwork_id
+                LIMIT 1
+              ),
+              COALESCE(
+                (
+                  SELECT COALESCE(artwork.artwork_stable_id, artwork.canonical_id)
+                  FROM artwork
+                  WHERE artwork.id = log.artwork_id
+                ),
+                'legacy-artwork-' || log.artwork_id
+              ),
+              (
+                SELECT artwork.artwork_manifest_path
+                FROM artwork
+                WHERE artwork.id = log.artwork_id
+              ),
+              (
+                SELECT file_asset.current_path
+                FROM file_asset
+                WHERE file_asset.id = log.file_asset_id
+              ),
+              log.old_path,
+              log.new_path,
+              log.result,
+              log.message,
+              log.created_at
+            FROM file_operation_log_legacy AS log;
+            DROP TABLE file_operation_log_legacy;
+            COMMIT;
+            "#,
+        )?;
+    }
+
+    if !column_exists(conn, "manifest_projection_state", "owner_stable_id")? {
+        conn.execute_batch(
+            r#"
+            BEGIN IMMEDIATE;
+            ALTER TABLE manifest_projection_state RENAME TO manifest_projection_state_legacy;
+            CREATE TABLE manifest_projection_state (
+              owner_kind TEXT NOT NULL,
+              owner_stable_id TEXT NOT NULL,
+              owner_id INTEGER,
+              manifest_path TEXT NOT NULL,
+              error TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (owner_kind, manifest_path)
+            );
+            INSERT OR IGNORE INTO manifest_projection_state (
+              owner_kind, owner_stable_id, owner_id, manifest_path, error, updated_at
+            )
+            SELECT
+              issue.owner_kind,
+              COALESCE(
+                CASE issue.owner_kind
+                  WHEN 'artwork' THEN (
+                    SELECT COALESCE(artwork.artwork_stable_id, artwork.canonical_id)
+                    FROM artwork
+                    WHERE artwork.id = issue.owner_id
+                  )
+                END,
+                issue.owner_kind || ':' || issue.owner_id
+              ),
+              issue.owner_id,
+              issue.manifest_path,
+              issue.error,
+              issue.updated_at
+            FROM manifest_projection_state_legacy AS issue;
+            DROP TABLE manifest_projection_state_legacy;
+            CREATE INDEX IF NOT EXISTS idx_manifest_projection_state_updated_at
+              ON manifest_projection_state(updated_at);
+            COMMIT;
+            "#,
+        )?;
+    }
+    Ok(())
+}
+
+fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == column_name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn next_canonical_id_locked(
+    conn: &Connection,
+    gallery_manifest_path: &Path,
+) -> rusqlite::Result<String> {
     let mut allocator = CanonicalIdAllocator::new(conn)?;
-    Ok(allocator.next_id())
+    Ok(allocator.next_id_for_gallery(gallery_manifest_path))
 }
 
 fn caf_piece_id_from_url(url: &str) -> Option<String> {
@@ -7836,7 +8108,7 @@ fn create_imported_artwork_with_allocator_locked(
     now: &str,
     allocator: &mut CanonicalIdAllocator,
 ) -> Result<i64> {
-    let canonical_id = allocator.next_id();
+    let canonical_id = allocator.next_id_for_gallery(&gallery.manifest_path);
     let manifest_path = default_artwork_manifest_path(&gallery.manifest_path, &canonical_id);
     let path_string = manifest_path.to_string_lossy().to_string();
     conn.execute(

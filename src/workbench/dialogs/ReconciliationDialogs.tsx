@@ -1,7 +1,9 @@
 import type { RefObject } from "react";
 import type {
   CafImportReconciliationItem,
+  GallerySummary,
   SniktImportReconciliationItem,
+  UnreferencedArtworkReport,
 } from "../../domain/types";
 
 export type CafReconciliationState = {
@@ -15,6 +17,132 @@ export type SniktReconciliationState = {
   index: number;
   isResolving: boolean;
 };
+
+export type UnreferencedArtworkReconciliationState = {
+  report: UnreferencedArtworkReport;
+  selectedPaths: string[];
+  galleryId: string;
+  isImporting: boolean;
+};
+
+export function UnreferencedArtworkDialog({
+  reconciliation,
+  galleries,
+  onChange,
+  onImport,
+  onIgnore,
+}: {
+  reconciliation: UnreferencedArtworkReconciliationState | null;
+  galleries: GallerySummary[];
+  onChange: (next: UnreferencedArtworkReconciliationState) => void;
+  onImport: () => void;
+  onIgnore: () => void;
+}) {
+  if (!reconciliation) return null;
+  const importableCount = reconciliation.report.items.filter((item) => item.can_import).length;
+  const togglePath = (path: string, selected: boolean) => {
+    onChange({
+      ...reconciliation,
+      selectedPaths: selected
+        ? [...reconciliation.selectedPaths, path]
+        : reconciliation.selectedPaths.filter((candidate) => candidate !== path),
+    });
+  };
+
+  return (
+    <div className="workspace-command-backdrop">
+      <section
+        className="workspace-command workspace-command-modal unreferenced-artwork-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="unreferenced-artwork-title"
+      >
+        <h3 id="unreferenced-artwork-title">Unreferenced Artwork Found</h3>
+        <p className="workspace-command-warning">
+          OA Curator found {reconciliation.report.items.length} Artwork{" "}
+          {reconciliation.report.items.length === 1 ? "folder" : "folders"} on disk that this
+          Collection does not reference. Import selected records or leave every file untouched.
+        </p>
+        <div className="unreferenced-artwork-list">
+          {reconciliation.report.items.map((item) => {
+            const selected = reconciliation.selectedPaths.includes(item.manifest_path);
+            return (
+              <article className="unreferenced-artwork-item" key={item.manifest_path}>
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${item.canonical_id} for import`}
+                    checked={selected}
+                    disabled={!item.can_import || reconciliation.isImporting}
+                    onChange={(event) =>
+                      togglePath(item.manifest_path, event.currentTarget.checked)
+                    }
+                  />
+                  <strong>
+                    {item.canonical_id} {item.title || "Unreadable Artwork record"}
+                  </strong>
+                </label>
+                <span className="unreferenced-artwork-path">{item.manifest_path}</span>
+                {item.error && <span className="unreferenced-artwork-error">{item.error}</span>}
+                <span>
+                  {item.declared_file_count} declared; {item.undeclared_files.length} undeclared;{" "}
+                  {item.missing_declared_files.length} missing
+                </span>
+                {item.undeclared_files.length > 0 && (
+                  <span>Undeclared: {item.undeclared_files.join(", ")}</span>
+                )}
+                {item.duplicate_candidates.length > 0 && (
+                  <span>
+                    Possible duplicate:{" "}
+                    {item.duplicate_candidates
+                      .map((candidate) => candidate.canonical_id + " " + candidate.title)
+                      .join(", ")}
+                  </span>
+                )}
+              </article>
+            );
+          })}
+        </div>
+        {importableCount > 0 && (
+          <label>
+            Import selected Artwork into Gallery
+            <select
+              aria-label="Gallery for imported Artwork"
+              value={reconciliation.galleryId}
+              disabled={reconciliation.isImporting}
+              onChange={(event) =>
+                onChange({ ...reconciliation, galleryId: event.currentTarget.value })
+              }
+            >
+              {galleries.map((gallery) => (
+                <option key={gallery.id} value={gallery.id}>
+                  {gallery.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="workspace-command-actions">
+          <button
+            type="button"
+            className="primary"
+            disabled={
+              reconciliation.selectedPaths.length === 0 ||
+              !reconciliation.galleryId ||
+              reconciliation.isImporting
+            }
+            onClick={onImport}
+          >
+            {reconciliation.isImporting ? "Importing..." : "Import selected"}
+          </button>
+          <button type="button" disabled={reconciliation.isImporting} onClick={onIgnore}>
+            Leave files untouched
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 type ReconciliationDialogProps<TState> = {
   reconciliation: TState | null;

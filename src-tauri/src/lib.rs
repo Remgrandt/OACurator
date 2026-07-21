@@ -289,6 +289,8 @@ pub fn run() {
             commands::imports::import_snikt_collection_command,
             commands::imports::resolve_snikt_reconciliation_command,
             commands::workspace::open_collection_command,
+            commands::workspace::unreferenced_artworks_command,
+            commands::workspace::import_unreferenced_artworks_command,
             commands::workspace::close_collection_command,
             commands::maintenance::catalog_consistency_check_command,
             commands::maintenance::repair_manifest_projections_command,

@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+use tempfile::NamedTempFile;
 
 pub const SCHEMA_VERSION: &str = "0.1";
 
@@ -168,10 +170,80 @@ pub fn write_json_manifest<T>(path: &Path, manifest: &T) -> Result<()>
 where
     T: Serialize,
 {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    staged_json_manifest(path, manifest)?.persist(true)
+}
+
+pub fn write_new_json_manifest<T>(path: &Path, manifest: &T) -> Result<()>
+where
+    T: Serialize,
+{
+    staged_json_manifest(path, manifest)?.persist(false)
+}
+
+pub struct StagedJsonManifest {
+    target: std::path::PathBuf,
+    temporary: NamedTempFile,
+}
+
+impl StagedJsonManifest {
+    pub fn persist(self, overwrite: bool) -> Result<()> {
+        let result = if overwrite {
+            self.temporary.persist(&self.target)
+        } else {
+            self.temporary.persist_noclobber(&self.target)
+        };
+        result.map(|_| ()).map_err(|error| {
+            crate::AppError::Message(format!(
+                "Could not install completed manifest {}: {}",
+                self.target.display(),
+                error.error
+            ))
+        })
     }
-    let contents = serde_json::to_string_pretty(manifest)?;
-    fs::write(path, format!("{contents}\n"))?;
-    Ok(())
+}
+
+pub fn staged_json_manifest<T>(path: &Path, manifest: &T) -> Result<StagedJsonManifest>
+where
+    T: Serialize,
+{
+    let contents = format!("{}\n", serde_json::to_string_pretty(manifest)?);
+    let parent = path.parent().ok_or_else(|| {
+        crate::AppError::Message(format!("Manifest path has no parent: {}", path.display()))
+    })?;
+    fs::create_dir_all(parent)?;
+    let mut temporary = NamedTempFile::new_in(parent)?;
+    temporary.write_all(contents.as_bytes())?;
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+    Ok(StagedJsonManifest {
+        target: path.to_path_buf(),
+        temporary,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_json_manifest, write_json_manifest, write_new_json_manifest};
+    use serde_json::{json, Value};
+    use tempfile::tempdir;
+
+    #[test]
+    fn completed_updates_replace_existing_json() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join(".oaartwork");
+        write_json_manifest(&path, &json!({"version": 1})).expect("first write");
+        write_json_manifest(&path, &json!({"version": 2})).expect("replacement");
+        let value: Value = read_json_manifest(&path).expect("read replacement");
+        assert_eq!(value, json!({"version": 2}));
+    }
+
+    #[test]
+    fn new_manifest_write_never_clobbers_an_existing_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join(".oaartwork");
+        write_new_json_manifest(&path, &json!({"owner": "orphan"})).expect("first write");
+        assert!(write_new_json_manifest(&path, &json!({"owner": "new"})).is_err());
+        let value: Value = read_json_manifest(&path).expect("read original");
+        assert_eq!(value, json!({"owner": "orphan"}));
+    }
 }

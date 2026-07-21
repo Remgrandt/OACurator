@@ -1154,6 +1154,54 @@ p {
   width: min(720px, 100%);
 }
 
+.unreferenced-artwork-modal {
+  max-height: calc(100vh - 48px);
+  max-width: 760px;
+  overflow: auto;
+  width: min(760px, 100%);
+}
+
+.unreferenced-artwork-list {
+  display: grid;
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.unreferenced-artwork-item {
+  border: 1px solid var(--border);
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+}
+
+.unreferenced-artwork-item label {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.unreferenced-artwork-item input[type="checkbox"] {
+  height: 14px;
+  justify-self: start;
+  width: 14px;
+}
+
+.unreferenced-artwork-item span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.unreferenced-artwork-item .unreferenced-artwork-error {
+  color: var(--danger);
+}
+
+.unreferenced-artwork-path {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
 .caf-reconciliation-grid {
   border: 1px solid var(--border);
   display: grid;

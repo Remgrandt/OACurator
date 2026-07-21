@@ -123,6 +123,7 @@ import type {
   StartupBehaviorPreference,
   ThemePreference,
   ThumbnailCacheProgress,
+  UnreferencedArtworkReport,
   WorkspaceCommandMode,
   WorkspaceLoadProgress,
   WorkspaceState,
@@ -136,8 +137,10 @@ import { DeleteConfirmDialog, TrashFailureDialog } from "./workbench/dialogs/Del
 import {
   CafReconciliationDialog,
   SniktReconciliationDialog,
+  UnreferencedArtworkDialog,
   type CafReconciliationState,
   type SniktReconciliationState,
+  type UnreferencedArtworkReconciliationState,
 } from "./workbench/dialogs/ReconciliationDialogs";
 import { OaaExportDialog, type OaaExportWizardState } from "./workbench/dialogs/OaaExportDialog";
 import {
@@ -436,6 +439,8 @@ function WorkbenchApp() {
   const [sniktReconciliationThumbUrls, setSniktReconciliationThumbUrls] = useState<
     Record<number, string>
   >({});
+  const [unreferencedArtworkReconciliation, setUnreferencedArtworkReconciliation] =
+    useState<UnreferencedArtworkReconciliationState | null>(null);
   const [oaaExportWizard, setOaaExportWizard] = useState<OaaExportWizardState | null>(null);
   const [raremarqExportWizard, setRaremarqExportWizard] =
     useState<RaremarqExportWizardState | null>(null);
@@ -1444,6 +1449,57 @@ function WorkbenchApp() {
     }
   }
 
+  async function offerUnreferencedArtworks(nextWorkspace: WorkspaceState | null) {
+    const collection = nextWorkspace?.collection;
+    if (!collection) return;
+    try {
+      const report = await invoke<UnreferencedArtworkReport>("unreferenced_artworks_command", {
+        collectionId: collection.id,
+      });
+      if (!report || !Array.isArray(report.items) || report.items.length === 0) return;
+      const galleryId = nextWorkspace.selected_gallery_id ?? nextWorkspace.galleries[0]?.id ?? null;
+      setUnreferencedArtworkReconciliation({
+        report,
+        selectedPaths: [],
+        galleryId: galleryId?.toString() ?? "",
+        isImporting: false,
+      });
+    } catch (caught) {
+      setError("Could not check the Collection for unreferenced Artwork: " + errorMessage(caught));
+    }
+  }
+
+  async function importSelectedUnreferencedArtworks() {
+    const reconciliation = unreferencedArtworkReconciliation;
+    if (!reconciliation || reconciliation.isImporting) return;
+    const galleryId = Number(reconciliation.galleryId);
+    if (!Number.isSafeInteger(galleryId) || reconciliation.selectedPaths.length === 0) return;
+    setUnreferencedArtworkReconciliation({ ...reconciliation, isImporting: true });
+    try {
+      const nextWorkspace = await invoke<WorkspaceState>("import_unreferenced_artworks_command", {
+        request: {
+          collection_id: reconciliation.report.collection_id,
+          gallery_id: galleryId,
+          manifest_paths: reconciliation.selectedPaths,
+        },
+      });
+      applyWorkspaceReset(nextWorkspace);
+      setUnreferencedArtworkReconciliation(null);
+      const noun = reconciliation.selectedPaths.length === 1 ? "record" : "records";
+      setStatus(
+        "Imported " + reconciliation.selectedPaths.length + " unreferenced Artwork " + noun,
+      );
+    } catch (caught) {
+      setUnreferencedArtworkReconciliation({ ...reconciliation, isImporting: false });
+      setError(errorMessage(caught));
+    }
+  }
+
+  function ignoreUnreferencedArtworks() {
+    setUnreferencedArtworkReconciliation(null);
+    setStatus("Unreferenced Artwork left untouched");
+  }
+
   async function openRecentCollection(recent: RecentCollection) {
     try {
       setError("");
@@ -1455,7 +1511,8 @@ function WorkbenchApp() {
       });
       setStatus("Collection opened");
       setStartupDialogDismissed(true);
-      await loadWorkspace({ resetTree: true });
+      const nextWorkspace = await loadWorkspace({ resetTree: true });
+      await offerUnreferencedArtworks(nextWorkspace);
       await loadRecentCollections();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -1476,6 +1533,7 @@ function WorkbenchApp() {
       setError("");
       const nextWorkspace = await invoke<WorkspaceState>("close_collection_command");
       applyWorkspaceReset(nextWorkspace);
+      setUnreferencedArtworkReconciliation(null);
       setStatus("Collection closed");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -2104,7 +2162,8 @@ function WorkbenchApp() {
         request: { path: selected },
       });
       setStatus("Collection opened");
-      await loadWorkspace({ resetTree: true });
+      const nextWorkspace = await loadWorkspace({ resetTree: true });
+      await offerUnreferencedArtworks(nextWorkspace);
       await loadRecentCollections();
     } catch (caught) {
       setError(errorMessage(caught));
@@ -2399,6 +2458,9 @@ function WorkbenchApp() {
       setWorkspaceCommandCsvPath("");
       setWorkspaceCommandBasePath("");
       const nextWorkspace = await loadWorkspace();
+      if (workspaceCommand === "open_collection") {
+        await offerUnreferencedArtworks(nextWorkspace);
+      }
       if (workspaceCommand !== "new_gallery") {
         await loadRecentCollections();
       }
@@ -3596,6 +3658,13 @@ function WorkbenchApp() {
       {renderPreferencesDialog()}
       {renderStartupDialog()}
       {renderAddToGalleryDialog()}
+      <UnreferencedArtworkDialog
+        reconciliation={unreferencedArtworkReconciliation}
+        galleries={galleries}
+        onChange={setUnreferencedArtworkReconciliation}
+        onImport={() => void importSelectedUnreferencedArtworks()}
+        onIgnore={ignoreUnreferencedArtworks}
+      />
       {workspaceCommand ? (
         <WorkspaceCommandDialog
           command={workspaceCommand}

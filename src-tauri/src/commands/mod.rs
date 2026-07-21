@@ -12,7 +12,7 @@ use crate::catalog::{
     ArtworkIdLabelPreference, ArtworkMergeUpdate, ArtworkSummary, AssetKind, Catalog,
     CollectionSummary, DeleteArtworkFileResult, DeletePreview, DeleteResult, FileRenameExecution,
     FileRenamePlan, FileRenameResult, GalleryMergeUpdate, GallerySummary, MetadataUpdate,
-    RecentCollection, WorkspaceLoadProgress, WorkspaceState,
+    RecentCollection, UnreferencedArtworkReport, WorkspaceLoadProgress, WorkspaceState,
 };
 use crate::export::{create_png_derivative, PngExportVariant};
 use crate::file_operations::FileOperationService;
@@ -192,6 +192,13 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenManifestRequest {
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportUnreferencedArtworksRequest {
+    pub collection_id: i64,
+    pub gallery_id: i64,
+    pub manifest_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

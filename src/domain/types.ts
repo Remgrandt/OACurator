@@ -132,6 +132,28 @@ export type WorkspaceState = {
   artworks: ArtworkSummary[];
 };
 
+export type UnreferencedArtworkDuplicate = {
+  canonical_id: string;
+  title: string;
+};
+
+export type UnreferencedArtworkCandidate = {
+  canonical_id: string;
+  title?: string | null;
+  manifest_path: string;
+  can_import: boolean;
+  error?: string | null;
+  declared_file_count: number;
+  missing_declared_files: string[];
+  undeclared_files: string[];
+  duplicate_candidates: UnreferencedArtworkDuplicate[];
+};
+
+export type UnreferencedArtworkReport = {
+  collection_id: number;
+  items: UnreferencedArtworkCandidate[];
+};
+
 export type MergeGalleryRequest = {
   collection_id: number;
   source_gallery_id: number;
