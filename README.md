@@ -10,7 +10,7 @@ OA Curator helps collectors keep a private, durable catalog of original art scan
 
 ## License
 
-OA Curator is source-available freeware, not open source. You may view, build, install, and use unmodified copies under the terms in `LICENSE`. Redistribution, modified builds, and third-party code contributions are not permitted unless Remgrandt Games LLC authorizes them in writing.
+OA Curator is source-available freeware, not open source. You may view, build, install, and use unmodified copies under the terms in `LICENSE`. Redistribution, modified builds, and third-party code contributions are not permitted unless Remgrandt Works authorizes them in writing.
 
 ## What It Does Today
 

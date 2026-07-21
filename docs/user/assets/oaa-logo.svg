@@ -2,17 +2,17 @@
 <!--
   Original Art Archive (OAA) logo
 
-  Copyright © 2026 Remgrandt Games LLC.
+  Copyright © 2026 Remgrandt Works.
 
   The names "Original Art Archive," "OAA," and associated logos,
-  marks, and branding are reserved by Remgrandt Games LLC.
+  marks, and branding are reserved by Remgrandt Works.
 
   This asset may be used to truthfully describe compatibility with
   the Original Art Archive Format, such as "supports OAA," "imports
   OAA files," or "exports OAA archives."
 
   This asset may not be used to imply official status, endorsement,
-  certification, or maintenance by the OAA project or Remgrandt Games LLC
+  certification, or maintenance by the OAA project or Remgrandt Works
   without written permission.
 
   Usage is governed by LICENSE.md and assets/README.md in the OAA
@@ -45,9 +45,9 @@
       <rdf:Description
          rdf:about="">
         <dc:title>Original Art Archive (OAA) logo</dc:title>
-        <dc:creator>Remgrandt Games LLC</dc:creator>
-        <dcterms:publisher>Remgrandt Games LLC</dcterms:publisher>
-        <dc:rights>Copyright © 2026 Remgrandt Games LLC. The names "Original Art Archive," "OAA," and associated logos, marks, and branding are reserved. Compatibility use is permitted as described in the OAA Format repository license and mark policy.</dc:rights>
+        <dc:creator>Remgrandt Works</dc:creator>
+        <dcterms:publisher>Remgrandt Works</dcterms:publisher>
+        <dc:rights>Copyright © 2026 Remgrandt Works. The names "Original Art Archive," "OAA," and associated logos, marks, and branding are reserved. Compatibility use is permitted as described in the OAA Format repository license and mark policy.</dc:rights>
         <dc:type>Logo / format mark</dc:type>
         <dcterms:created>2026</dcterms:created>
         <dcterms:identifier>oaa-logo</dcterms:identifier>
