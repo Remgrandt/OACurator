@@ -78,6 +78,17 @@ pub struct WorkspaceState {
     pub galleries: Vec<GallerySummary>,
     pub selected_gallery_id: Option<i64>,
     pub artworks: Vec<ArtworkSummary>,
+    pub total_artwork_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceFilters {
+    pub files: Option<String>,
+    pub artist: Option<String>,
+    pub caf_url: Option<String>,
+    pub snikt_url: Option<String>,
+    pub raremarq_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

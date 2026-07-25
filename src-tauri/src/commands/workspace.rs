@@ -6,6 +6,7 @@ pub async fn workspace_state_command(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     search_query: Option<String>,
+    filters: Option<WorkspaceFilters>,
 ) -> std::result::Result<WorkspaceState, String> {
     let catalog = state.catalog.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -13,7 +14,11 @@ pub async fn workspace_state_command(
             let _ = app.emit("workspace-load-progress", progress);
         };
         catalog
-            .workspace_state_with_search_and_progress(search_query.as_deref(), emit_progress)
+            .workspace_state_with_search_and_progress(
+                search_query.as_deref(),
+                filters.unwrap_or_default(),
+                emit_progress,
+            )
             .map_err(|error| error.to_string())
     })
     .await

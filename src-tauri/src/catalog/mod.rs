@@ -3432,17 +3432,28 @@ impl Catalog {
         &self,
         search_query: Option<&str>,
     ) -> Result<WorkspaceState> {
-        self.workspace_state_with_search_and_progress(search_query, |_| {})
+        self.workspace_state_with_search_and_progress(
+            search_query,
+            WorkspaceFilters::default(),
+            |_| {},
+        )
     }
 
     pub fn workspace_state_with_search_and_progress<F>(
         &self,
         search_query: Option<&str>,
+        filters: WorkspaceFilters,
         mut progress: F,
     ) -> Result<WorkspaceState>
     where
         F: FnMut(WorkspaceLoadProgress),
     {
+        let files_presence = parse_presence_filter(filters.files.as_deref(), "Files")?;
+        let artist_presence = parse_presence_filter(filters.artist.as_deref(), "Artist credit")?;
+        let caf_url_presence = parse_presence_filter(filters.caf_url.as_deref(), "CAF URL")?;
+        let snikt_url_presence = parse_presence_filter(filters.snikt_url.as_deref(), "SNIKT URL")?;
+        let raremarq_url_presence =
+            parse_presence_filter(filters.raremarq_url.as_deref(), "Raremarq URL")?;
         let search_terms = search_query
             .map(parse_workspace_search_query)
             .unwrap_or_default();
@@ -3471,6 +3482,11 @@ impl Catalog {
             };
             let selected_gallery_id =
                 selected_gallery_id.or_else(|| galleries.first().map(|gallery| gallery.id));
+            let total_artwork_count = if let Some(collection) = &collection {
+                self.artwork_count_for_collection(collection.id)?
+            } else {
+                0
+            };
             let artworks = if let Some(collection) = &collection {
                 if search_terms.is_empty() {
                     self.artworks_for_collection_with_progress(collection.id, &mut progress)?
@@ -3484,12 +3500,21 @@ impl Catalog {
             } else {
                 Vec::new()
             };
+            let artworks = self.filter_artworks_by_presence(
+                artworks,
+                files_presence,
+                artist_presence,
+                caf_url_presence,
+                snikt_url_presence,
+                raremarq_url_presence,
+            )?;
             return Ok(WorkspaceState {
                 mode,
                 collection,
                 galleries,
                 selected_gallery_id,
                 artworks,
+                total_artwork_count,
             });
         }
 
@@ -3504,6 +3529,11 @@ impl Catalog {
             } else {
                 Vec::new()
             };
+            let total_artwork_count = if let Some(gallery_id) = selected_gallery_id {
+                self.artwork_count_for_gallery(gallery_id)?
+            } else {
+                0
+            };
             let artworks = if let Some(gallery_id) = selected_gallery_id {
                 if search_terms.is_empty() {
                     self.artworks_for_gallery_with_progress(gallery_id, &mut progress)?
@@ -3517,16 +3547,90 @@ impl Catalog {
             } else {
                 Vec::new()
             };
+            let artworks = self.filter_artworks_by_presence(
+                artworks,
+                files_presence,
+                artist_presence,
+                caf_url_presence,
+                snikt_url_presence,
+                raremarq_url_presence,
+            )?;
             return Ok(WorkspaceState {
                 mode,
                 collection: None,
                 galleries,
                 selected_gallery_id,
                 artworks,
+                total_artwork_count,
             });
         }
 
         Ok(empty_workspace_state())
+    }
+
+    fn filter_artworks_by_presence(
+        &self,
+        mut artworks: Vec<ArtworkSummary>,
+        files_presence: Option<bool>,
+        artist_presence: Option<bool>,
+        caf_url_presence: Option<bool>,
+        snikt_url_presence: Option<bool>,
+        raremarq_url_presence: Option<bool>,
+    ) -> Result<Vec<ArtworkSummary>> {
+        if let Some(required) = files_presence {
+            artworks.retain(|artwork| (artwork.file_count > 0) == required);
+        }
+        if let Some(required) = artist_presence {
+            artworks.retain(|artwork| artwork.artist_credits.is_empty() != required);
+        }
+
+        let provider_filters = [
+            ("caf", caf_url_presence),
+            ("snikt", snikt_url_presence),
+            ("raremarq", raremarq_url_presence),
+        ];
+        if provider_filters.iter().all(|(_, filter)| filter.is_none()) {
+            return Ok(artworks);
+        }
+        let conn = self.lock()?;
+        for (provider, required) in provider_filters {
+            let Some(required) = required else {
+                continue;
+            };
+            let mut statement = conn.prepare(
+                "SELECT artwork_id
+                 FROM external_link
+                 WHERE link_type = ?1 AND TRIM(url) <> ''",
+            )?;
+            let present_ids = statement
+                .query_map(params![provider], |row| row.get(0))?
+                .collect::<std::result::Result<BTreeSet<i64>, _>>()?;
+            artworks.retain(|artwork| present_ids.contains(&artwork.id) == required);
+        }
+        Ok(artworks)
+    }
+
+    fn artwork_count_for_collection(&self, collection_id: i64) -> Result<usize> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT COUNT(DISTINCT ga.artwork_id)
+             FROM collection_gallery cg
+             JOIN gallery_artwork ga ON ga.gallery_id = cg.gallery_id
+             WHERE cg.collection_id = ?1",
+            params![collection_id],
+            |row| row.get(0),
+        )
+        .map_err(AppError::from)
+    }
+
+    fn artwork_count_for_gallery(&self, gallery_id: i64) -> Result<usize> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM gallery_artwork WHERE gallery_id = ?1",
+            params![gallery_id],
+            |row| row.get(0),
+        )
+        .map_err(AppError::from)
     }
 
     pub fn close_collection(&self) -> Result<()> {
@@ -7353,6 +7457,17 @@ fn normalize_file_source_kind(value: &str) -> Result<String> {
     )))
 }
 
+fn parse_presence_filter(value: Option<&str>, label: &str) -> Result<Option<bool>> {
+    match value.map(str::trim) {
+        None | Some("any") => Ok(None),
+        Some("missing") => Ok(Some(false)),
+        Some("present") => Ok(Some(true)),
+        Some(value) => Err(AppError::Message(format!(
+            "Unsupported {label} filter: {value}"
+        ))),
+    }
+}
+
 pub fn parse_workspace_search_query(query: &str) -> Vec<WorkspaceSearchTerm> {
     let mut raw_terms = Vec::new();
     let mut current = String::new();
@@ -7647,6 +7762,7 @@ fn empty_workspace_state() -> WorkspaceState {
         galleries: Vec::new(),
         selected_gallery_id: None,
         artworks: Vec::new(),
+        total_artwork_count: 0,
     }
 }
 

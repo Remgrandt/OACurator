@@ -242,9 +242,18 @@ type CafMissingReportState = {
   isWriting: boolean;
   includePrivateMetadata: boolean;
 };
+type PresenceFilter = "any" | "missing" | "present";
+type CollectionFilters = {
+  files: PresenceFilter;
+  artist: PresenceFilter;
+  cafUrl: PresenceFilter;
+  sniktUrl: PresenceFilter;
+  raremarqUrl: PresenceFilter;
+};
 type LoadWorkspaceOptions = {
   resetTree?: boolean;
   searchQuery?: string;
+  collectionFilters?: CollectionFilters;
   startupBehavior?: StartupBehaviorPreference;
 };
 type StartupReadyKey = "frames" | "workspace" | "defaultRoot";
@@ -262,6 +271,22 @@ const DEFAULT_PROPERTY_SOURCE_FILTERS: PropertySourceFilters = {
   snikt: true,
   raremarq: true,
 };
+
+const DEFAULT_COLLECTION_FILTERS: CollectionFilters = {
+  files: "any",
+  artist: "any",
+  cafUrl: "any",
+  sniktUrl: "any",
+  raremarqUrl: "any",
+};
+
+const COLLECTION_FILTER_SECTIONS: { key: keyof CollectionFilters; label: string }[] = [
+  { key: "files", label: "Files" },
+  { key: "artist", label: "Artist credit" },
+  { key: "cafUrl", label: "CAF URL" },
+  { key: "sniktUrl", label: "SNIKT URL" },
+  { key: "raremarqUrl", label: "Raremarq URL" },
+];
 
 async function loadImageDataUrl(source: ImageDataUrlSource): Promise<string> {
   switch (source.kind) {
@@ -415,6 +440,8 @@ function WorkbenchApp() {
   const [propertySourceFilters, setPropertySourceFilters] = useState<PropertySourceFilters>(
     DEFAULT_PROPERTY_SOURCE_FILTERS,
   );
+  const [collectionFilters, setCollectionFilters] = useState(DEFAULT_COLLECTION_FILTERS);
+  const [collectionFilterMenuOpen, setCollectionFilterMenuOpen] = useState(false);
   const [exportDestination, setExportDestination] = useState("");
   const [exportDestinationIsAuto, setExportDestinationIsAuto] = useState(true);
   const [pngExportVariant, setPngExportVariant] = useState<PngExportVariant>("basic");
@@ -475,7 +502,9 @@ function WorkbenchApp() {
   const renameCommitInFlightRef = useRef(false);
   const selectedArtworkIdRef = useRef<number | null>(null);
   const collectionSearchQueryRef = useRef("");
+  const collectionFiltersRef = useRef(DEFAULT_COLLECTION_FILTERS);
   const collectionSearchDidMountRef = useRef(false);
+  const collectionFilterButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useLayoutEffect(() => {
     markStartupTrace("workbench_layout_effect");
@@ -522,16 +551,21 @@ function WorkbenchApp() {
 
   useEffect(() => {
     collectionSearchQueryRef.current = collectionSearchQuery;
+    collectionFiltersRef.current = collectionFilters;
     if (!collectionSearchDidMountRef.current) {
       collectionSearchDidMountRef.current = true;
       return;
     }
 
     const timeout = window.setTimeout(() => {
-      void loadWorkspace({ resetTree: true, searchQuery: collectionSearchQuery });
+      void loadWorkspace({
+        resetTree: true,
+        searchQuery: collectionSearchQuery,
+        collectionFilters,
+      });
     }, 120);
     return () => window.clearTimeout(timeout);
-  }, [collectionSearchQuery]);
+  }, [collectionSearchQuery, collectionFilters]);
 
   useEffect(() => {
     selectedArtworkIdRef.current = selectedArtworkId;
@@ -1377,17 +1411,30 @@ function WorkbenchApp() {
     const traceInitialWorkspaceLoad = !startupReadiness.workspace;
     const searchQuery = options.searchQuery ?? collectionSearchQueryRef.current;
     const trimmedSearchQuery = searchQuery.trim();
-    const searchArgs = trimmedSearchQuery ? { searchQuery } : undefined;
+    const activeFilters = options.collectionFilters ?? collectionFiltersRef.current;
+    const presenceFiltersActive = Object.values(activeFilters).some((value) => value !== "any");
+    const filtersActive = Boolean(trimmedSearchQuery) || presenceFiltersActive;
+    const presenceFilters = {
+      ...(activeFilters.files === "any" ? {} : { files: activeFilters.files }),
+      ...(activeFilters.artist === "any" ? {} : { artist: activeFilters.artist }),
+      ...(activeFilters.cafUrl === "any" ? {} : { cafUrl: activeFilters.cafUrl }),
+      ...(activeFilters.sniktUrl === "any" ? {} : { sniktUrl: activeFilters.sniktUrl }),
+      ...(activeFilters.raremarqUrl === "any" ? {} : { raremarqUrl: activeFilters.raremarqUrl }),
+    };
+    const workspaceArgs = {
+      ...(trimmedSearchQuery ? { searchQuery } : {}),
+      ...(presenceFiltersActive ? { filters: presenceFilters } : {}),
+    };
     if (traceInitialWorkspaceLoad) {
       markStartupTrace("workspace_state_command_begin", "tauri-command", {
         resetTree: Boolean(options.resetTree),
-        searchActive: Boolean(searchArgs),
+        searchActive: Boolean(trimmedSearchQuery),
       });
     }
     try {
       setError("");
-      const nextWorkspace = searchArgs
-        ? await invoke<WorkspaceState>("workspace_state_command", searchArgs)
+      const nextWorkspace = filtersActive
+        ? await invoke<WorkspaceState>("workspace_state_command", workspaceArgs)
         : await invoke<WorkspaceState>("workspace_state_command");
       const visibleWorkspace = startupVisibleWorkspace(nextWorkspace, options.startupBehavior);
       if (traceInitialWorkspaceLoad) {
@@ -1410,7 +1457,9 @@ function WorkbenchApp() {
         visibleWorkspace.selected_gallery_id ?? visibleWorkspace.galleries[0]?.id ?? null,
       );
       if (options.resetTree) {
-        setCollapsedTreeNodes(searchArgs ? new Set() : defaultCollapsedTreeKeys(visibleWorkspace));
+        setCollapsedTreeNodes(
+          filtersActive ? new Set() : defaultCollapsedTreeKeys(visibleWorkspace),
+        );
         setExpandedFileTreeNodes(new Set());
       }
       return visibleWorkspace;
@@ -2765,7 +2814,6 @@ function WorkbenchApp() {
         setStatus("PNG export created");
         return;
       }
-      setSelectedCarouselItemKey(`file:${fileAsset.id}`);
       setStatus(`PNG export created: ${fileAsset.current_path}`);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -4454,8 +4502,8 @@ function WorkbenchApp() {
     const collectionSelected =
       inspectorTarget?.type === "collection" &&
       workspace?.collection?.id === inspectorTarget.collectionId;
-    const searchActive = isCollectionSearchActive();
-    const visibleGalleries = searchActive
+    const filtersActive = isCollectionExplorerFiltered();
+    const visibleGalleries = filtersActive
       ? galleries.filter((gallery) => artworksForGallery(gallery).length > 0)
       : galleries;
 
@@ -4518,9 +4566,13 @@ function WorkbenchApp() {
           )}
         </div>
 
-        {collectionExpanded && searchActive && artworks.length === 0 ? (
+        {collectionExpanded && filtersActive && artworks.length === 0 ? (
           <div className="empty-browser">
-            <p>No Artworks match the current search.</p>
+            <p>
+              {!hasActiveCollectionFilters()
+                ? "No Artworks match the current search."
+                : "No Artworks match the current filters."}
+            </p>
           </div>
         ) : collectionExpanded && visibleGalleries.length > 0 ? (
           visibleGalleries.map((gallery, index) =>
@@ -4539,7 +4591,25 @@ function WorkbenchApp() {
     return collectionSearchQuery.trim().length > 0;
   }
 
+  function activeCollectionFilterLabels() {
+    return COLLECTION_FILTER_SECTIONS.flatMap(({ key, label }) => {
+      const value = collectionFilters[key];
+      return value === "any" ? [] : [`${label} ${value}`];
+    });
+  }
+
+  function hasActiveCollectionFilters() {
+    return activeCollectionFilterLabels().length > 0;
+  }
+
+  function isCollectionExplorerFiltered() {
+    return isCollectionSearchActive() || hasActiveCollectionFilters();
+  }
+
   function renderCollectionTreeControls() {
+    const activeFilterLabels = activeCollectionFilterLabels();
+    const filterLabel = activeFilterLabels.length > 0 ? activeFilterLabels.join(", ") : "Any";
+
     return (
       <div
         className="collection-tree-toolbar"
@@ -4562,6 +4632,70 @@ function WorkbenchApp() {
         >
           <ToolbarIcon name="tree-expand-all" />
         </button>
+        <div
+          className="collection-tree-filter"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              setCollectionFilterMenuOpen(false);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape" || !collectionFilterMenuOpen) return;
+            event.preventDefault();
+            setCollectionFilterMenuOpen(false);
+            collectionFilterButtonRef.current?.focus();
+          }}
+        >
+          <button
+            ref={collectionFilterButtonRef}
+            type="button"
+            className="collection-tree-filter-button"
+            aria-label="Filter artworks"
+            aria-haspopup="menu"
+            aria-expanded={collectionFilterMenuOpen}
+            aria-pressed={hasActiveCollectionFilters()}
+            title={`Filter artworks: ${filterLabel}`}
+            onClick={() => setCollectionFilterMenuOpen((open) => !open)}
+          >
+            <ToolbarIcon name="filter" />
+          </button>
+          {collectionFilterMenuOpen ? (
+            <div className="collection-tree-filter-menu" role="menu" aria-label="Artwork filters">
+              {COLLECTION_FILTER_SECTIONS.map(({ key, label }) => (
+                <div
+                  className="collection-tree-filter-section"
+                  role="group"
+                  aria-label={label}
+                  key={key}
+                >
+                  <div className="collection-tree-filter-heading">{label}</div>
+                  {(
+                    [
+                      ["any", "Any"],
+                      ["missing", "Missing"],
+                      ["present", "Present"],
+                    ] as const
+                  ).map(([value, optionLabel]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={collectionFilters[key] === value}
+                      className={collectionFilters[key] === value ? "selected" : ""}
+                      onClick={() => {
+                        setCollectionFilters((current) => ({ ...current, [key]: value }));
+                        setCollectionFilterMenuOpen(false);
+                        collectionFilterButtonRef.current?.focus();
+                      }}
+                    >
+                      {optionLabel}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <input
           type="search"
           aria-label="Search collection"
@@ -4577,9 +4711,14 @@ function WorkbenchApp() {
   function renderCollectionExplorerStatus() {
     const count = artworks.length;
     const suffix = count === 1 ? "artwork" : "artworks";
-    const text = isCollectionSearchActive()
-      ? `Viewing ${count} filtered ${suffix}`
-      : `Viewing ${count} ${suffix}`;
+    const activeFilterLabels = activeCollectionFilterLabels();
+    let text =
+      activeFilterLabels.length === 0
+        ? isCollectionSearchActive()
+          ? `Viewing ${count} filtered ${suffix}`
+          : `Viewing ${count} ${suffix}`
+        : `Viewing ${count} of ${workspace?.total_artwork_count ?? count} artworks`;
+    if (activeFilterLabels.length > 0) text += ` — ${activeFilterLabels.join(", ")}`;
 
     return (
       <div className="collection-explorer-status" role="status">
@@ -6993,6 +7132,7 @@ function emptyWorkspaceState(): WorkspaceState {
     galleries: [],
     artworks: [],
     selected_gallery_id: null,
+    total_artwork_count: 0,
   };
 }
 

@@ -130,6 +130,7 @@ export type WorkspaceState = {
   galleries: GallerySummary[];
   selected_gallery_id?: number | null;
   artworks: ArtworkSummary[];
+  total_artwork_count: number;
 };
 
 export type UnreferencedArtworkDuplicate = {

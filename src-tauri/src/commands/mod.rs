@@ -12,7 +12,8 @@ use crate::catalog::{
     ArtworkIdLabelPreference, ArtworkMergeUpdate, ArtworkSummary, AssetKind, Catalog,
     CollectionSummary, DeleteArtworkFileResult, DeletePreview, DeleteResult, FileRenameExecution,
     FileRenamePlan, FileRenameResult, GalleryMergeUpdate, GallerySummary, MetadataUpdate,
-    RecentCollection, UnreferencedArtworkReport, WorkspaceLoadProgress, WorkspaceState,
+    RecentCollection, UnreferencedArtworkReport, WorkspaceFilters, WorkspaceLoadProgress,
+    WorkspaceState,
 };
 use crate::export::{create_png_derivative, PngExportVariant};
 use crate::file_operations::FileOperationService;
