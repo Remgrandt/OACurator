@@ -2,6 +2,8 @@
 
 site_name: OA Curator User Guide
 site_description: User documentation for OA Curator, a local-first desktop app for original art collectors.
+repo_url: https://github.com/remgrandt/OACurator
+repo_name: remgrandt/OACurator
 docs_dir: docs/user
 site_dir: public/help
 use_directory_urls: false

@@ -25,6 +25,10 @@ OA Curator is local-first. Your catalog and image files live on your computer un
   </iframe>
 </div>
 
+## Installing OA Curator
+
+Download the latest Windows or macOS installer from the [OA Curator releases page](https://github.com/remgrandt/OACurator/releases). Open the latest release, choose the installer for your operating system, and run the downloaded file.
+
 ## What This Build Supports
 
 The current application supports the core cataloging flow:
