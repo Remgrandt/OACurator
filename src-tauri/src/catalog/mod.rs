@@ -8138,10 +8138,11 @@ fn next_canonical_id_locked(
 }
 
 fn caf_piece_id_from_url(url: &str) -> Option<String> {
-    if !url.to_ascii_lowercase().contains("gallerypiece.asp") {
+    let (path, query) = url.split_once('?')?;
+    let route = path.rsplit('/').next()?.to_ascii_lowercase();
+    if route != "gallerypiece.asp" && route != "gallerypiecedetail.asp" {
         return None;
     }
-    let query = url.split_once('?')?.1;
     for pair in query.split('&') {
         let Some((key, value)) = pair.split_once('=') else {
             continue;
