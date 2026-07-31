@@ -135,6 +135,38 @@ assertIncludes(
   'universal_updater_artifact',
   'macOS Release updater manifest generation',
 );
+assertIncludes(
+  windowsRelease,
+  'OA-Curator-Windows-x64.exe',
+  'Windows Release stable installer alias',
+);
+assertIncludes(
+  windowsRelease,
+  'Stable Windows installer alias does not match the versioned installer.',
+  'Windows Release stable installer hash guard',
+);
+assert(
+  windowsRelease.indexOf('Generate updater manifest') <
+    windowsRelease.indexOf('Add stable Windows installer alias') &&
+    windowsRelease.indexOf('Add stable Windows installer alias') <
+      windowsRelease.indexOf('Generate checksums'),
+  'Windows stable alias must be created after latest.json and before checksums.',
+);
+assertIncludes(
+  macosRelease,
+  'OA-Curator-macOS-universal.dmg',
+  'macOS Release stable DMG alias',
+);
+assertIncludes(
+  macosRelease,
+  'cmp -s "$dmg_source" "$dmg_alias"',
+  'macOS Release stable DMG byte guard',
+);
+assert(
+  macosRelease.indexOf('OA-Curator-macOS-universal.dmg') <
+    macosRelease.indexOf('Generate checksums'),
+  'macOS stable alias must be created before checksums.',
+);
 assert(
   !macosRelease.includes('release-assets/${{ matrix.arch }}-'),
   'macOS Release workflow must not publish architecture-prefixed macOS release assets.',
@@ -183,6 +215,16 @@ assertIncludes(
   publishStagedRelease,
   'required_platforms',
   'Publish Staged Release updater manifest validation',
+);
+assertIncludes(
+  publishStagedRelease,
+  'OA-Curator-Windows-x64.exe',
+  'Publish Staged Release stable Windows alias validation',
+);
+assertIncludes(
+  publishStagedRelease,
+  'OA-Curator-macOS-universal.dmg',
+  'Publish Staged Release stable macOS alias validation',
 );
 
 assert(

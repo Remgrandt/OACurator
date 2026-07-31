@@ -276,6 +276,27 @@ jobs:
           }
           $latest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 release-assets\latest.json
 
+      - name: Add stable Windows installer alias
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $aliasName = "OA-Curator-Windows-x64.exe"
+          $installers = @(
+            Get-ChildItem release-assets -Filter *.exe -File |
+              Where-Object { $_.Name -ne $aliasName }
+          )
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one versioned Windows installer, found $($installers.Count)."
+          }
+
+          $aliasPath = Join-Path "release-assets" $aliasName
+          Copy-Item -LiteralPath $installers[0].FullName -Destination $aliasPath -Force
+          $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installers[0].FullName).Hash
+          $aliasHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $aliasPath).Hash
+          if ($sourceHash -ne $aliasHash) {
+            throw "Stable Windows installer alias does not match the versioned installer."
+          }
+
       - name: Generate checksums
         shell: pwsh
         run: |

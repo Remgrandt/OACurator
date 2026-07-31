@@ -107,6 +107,8 @@ jobs:
           required_platforms = []
           if require_windows:
               required_platforms.append("windows-x86_64")
+              if "OA-Curator-Windows-x64.exe" not in assets:
+                  raise SystemExit("Required stable Windows installer alias is missing.")
               if not any(name.endswith(".exe") for name in assets):
                   raise SystemExit("Required Windows installer asset is missing.")
               if not any(name.endswith(".exe.sig") for name in assets):
@@ -116,6 +118,8 @@ jobs:
 
           if require_macos:
               required_platforms.extend(["darwin-aarch64", "darwin-x86_64"])
+              if "OA-Curator-macOS-universal.dmg" not in assets:
+                  raise SystemExit("Required stable macOS DMG alias is missing.")
               if not any(name.endswith(".dmg") for name in assets):
                   raise SystemExit("Required macOS DMG asset is missing.")
               if not any(name.endswith(".app.tar.gz") for name in assets):

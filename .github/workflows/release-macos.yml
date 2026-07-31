@@ -393,6 +393,14 @@ jobs:
             exit 1
           fi
 
+          dmg_source="$(find release-assets -maxdepth 1 -type f -name '*_universal.dmg' -print -quit)"
+          dmg_alias="release-assets/OA-Curator-macOS-universal.dmg"
+          cp "$dmg_source" "$dmg_alias"
+          if ! cmp -s "$dmg_source" "$dmg_alias"; then
+            echo "::error::Stable macOS DMG alias does not match the versioned DMG."
+            exit 1
+          fi
+
       - name: Upload macOS build artifact
         uses: actions/upload-artifact@v4
         with:
