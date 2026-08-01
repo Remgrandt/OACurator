@@ -320,6 +320,7 @@ pub fn run() {
             commands::artwork::list_artworks_command,
             commands::artwork::artwork_detail_command,
             commands::artwork::ensure_artwork_thumbnail_command,
+            commands::artwork::ensure_artwork_preview_command,
             commands::artwork::save_metadata_command,
             commands::artwork::save_image_metadata_command,
             commands::artwork::reorder_file_assets_command,

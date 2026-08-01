@@ -436,19 +436,25 @@ pub async fn ensure_artwork_thumbnail_command(
     let catalog = state.catalog.clone();
     let cache_dir = state.cache_dir.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ensure_artwork_cache_derivatives(&catalog, artwork_id, &cache_dir)
-            .map_err(|error| error.to_string())?;
-        let detail = catalog
-            .artwork_detail(artwork_id)
-            .map_err(|error| error.to_string())?;
-        Ok(detail
-            .derived_assets
-            .into_iter()
-            .find(|asset| asset.derivative_type == "thumbnail")
-            .map(|asset| asset.path))
+        ensure_artwork_thumbnail(&catalog, artwork_id, &cache_dir)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("Thumbnail generation task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn ensure_artwork_preview_command(
+    state: tauri::State<'_, AppState>,
+    artwork_id: i64,
+) -> std::result::Result<Option<PathBuf>, String> {
+    let catalog = state.catalog.clone();
+    let cache_dir = state.cache_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_artwork_preview(&catalog, artwork_id, &cache_dir).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Preview generation task failed: {error}"))?
 }
 
 #[tauri::command]

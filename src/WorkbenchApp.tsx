@@ -149,6 +149,7 @@ import {
 } from "./workbench/dialogs/RaremarqExportDialog";
 import { WorkspaceCommandDialog } from "./workbench/dialogs/WorkspaceCommandDialog";
 import { FileDetailsPanel } from "./workbench/FileDetailsPanel";
+import { GalleryMode } from "./workbench/GalleryMode";
 import { useArtworkDetail } from "./workbench/hooks/useArtworkDetail";
 import {
   treeKeyForArtwork,
@@ -393,7 +394,13 @@ function WorkbenchApp() {
     inspectorTarget,
     setInspectorTarget,
   } = useWorkspace();
+  const [viewMode, setViewMode] = useState<"workbench" | "gallery">("workbench");
+  const [gallerySearchQuery, setGallerySearchQuery] = useState("");
+  const [galleryArtworks, setGalleryArtworks] = useState<ArtworkSummary[]>([]);
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
+  const [galleryPreviewUrls, setGalleryPreviewUrls] = useState<Record<string, string>>({});
+  const galleryPreviewRequestsRef = useRef(new Set<string>());
+  const galleryPreviewGenerationRef = useRef(0);
   const {
     setCollapsedTreeNodes,
     expandedFileTreeNodes,
@@ -566,6 +573,33 @@ function WorkbenchApp() {
     }, 120);
     return () => window.clearTimeout(timeout);
   }, [collectionSearchQuery, collectionFilters]);
+
+  useEffect(() => {
+    if (viewMode !== "gallery") return;
+    if (!workspace?.collection) {
+      setGalleryArtworks([]);
+      return;
+    }
+
+    let disposed = false;
+    const timeout = window.setTimeout(() => {
+      const searchQuery = gallerySearchQuery.trim();
+      const request = searchQuery
+        ? invoke<WorkspaceState>("workspace_state_command", { searchQuery: gallerySearchQuery })
+        : invoke<WorkspaceState>("workspace_state_command");
+      void request
+        .then((nextWorkspace) => {
+          if (!disposed) setGalleryArtworks(nextWorkspace.artworks);
+        })
+        .catch((caught: unknown) => {
+          if (!disposed) setError(errorMessage(caught));
+        });
+    }, 120);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeout);
+    };
+  }, [gallerySearchQuery, viewMode, workspace?.collection?.id]);
 
   useEffect(() => {
     selectedArtworkIdRef.current = selectedArtworkId;
@@ -1048,6 +1082,7 @@ function WorkbenchApp() {
   }
 
   useEffect(() => {
+    if (viewMode === "gallery") return;
     if (!selectedSummary) return;
     if (thumbnailUrls[selectedSummary.canonical_id] !== undefined) return;
 
@@ -1094,6 +1129,7 @@ function WorkbenchApp() {
     selectedSummary?.canonical_id,
     selectedSummary?.thumbnail_path,
     thumbnailUrls,
+    viewMode,
   ]);
 
   useEffect(() => {
@@ -1594,11 +1630,16 @@ function WorkbenchApp() {
   }
 
   function applyWorkspaceReset(nextWorkspace: WorkspaceState) {
+    galleryPreviewGenerationRef.current += 1;
+    galleryPreviewRequestsRef.current.clear();
     setWorkspace(nextWorkspace);
+    setGallerySearchQuery("");
+    setGalleryArtworks(nextWorkspace.artworks);
     setSelectedGalleryId(
       nextWorkspace.selected_gallery_id ?? nextWorkspace.galleries[0]?.id ?? null,
     );
     setThumbnailUrls({});
+    setGalleryPreviewUrls({});
     resetImagePreviews();
     setCollapsedTreeNodes(defaultCollapsedTreeKeys(nextWorkspace));
     setExpandedFileTreeNodes(new Set());
@@ -1671,6 +1712,39 @@ function WorkbenchApp() {
     } catch (caught) {
       setError(errorMessage(caught));
     }
+  }
+
+  function requestArtworkPreview(artwork: ArtworkSummary) {
+    const canonicalId = artwork.canonical_id;
+    if (
+      galleryPreviewUrls[canonicalId] !== undefined ||
+      galleryPreviewRequestsRef.current.has(canonicalId)
+    ) {
+      return;
+    }
+    const generation = galleryPreviewGenerationRef.current;
+    galleryPreviewRequestsRef.current.add(canonicalId);
+    void (async () => {
+      try {
+        const path = await invoke<string | null>("ensure_artwork_preview_command", {
+          artworkId: artwork.id,
+        });
+        const url = path ? await cacheImageDataUrl(path) : "";
+        if (galleryPreviewGenerationRef.current === generation) {
+          setGalleryPreviewUrls((current) =>
+            current[canonicalId] === undefined ? { ...current, [canonicalId]: url } : current,
+          );
+        }
+      } catch {
+        if (galleryPreviewGenerationRef.current === generation) {
+          setGalleryPreviewUrls((current) =>
+            current[canonicalId] === undefined ? { ...current, [canonicalId]: "" } : current,
+          );
+        }
+      } finally {
+        galleryPreviewRequestsRef.current.delete(canonicalId);
+      }
+    })();
   }
 
   function applyArtworkDetailUpdate(
@@ -3676,6 +3750,17 @@ function WorkbenchApp() {
       <DemoCaptionOverlay />
       <CommandBar
         theme={theme}
+        viewMode={viewMode}
+        onViewModeChange={(nextViewMode) => {
+          setViewMode(nextViewMode);
+          if (
+            nextViewMode === "workbench" &&
+            selectedArtworkId !== null &&
+            detail?.id !== selectedArtworkId
+          ) {
+            void loadArtwork(selectedArtworkId);
+          }
+        }}
         onNewCollection={() => void beginWorkspaceCommand("new_collection")}
         onOpenCollection={() => void beginWorkspaceCommand("open_collection")}
         onCloseCollection={() => void closeCollection()}
@@ -3797,7 +3882,37 @@ function WorkbenchApp() {
         />
       ) : null}
 
-      <div className="workbench-frame">
+      <div className={`workbench-frame ${viewMode === "gallery" ? "gallery-mode-active" : ""}`}>
+        {viewMode === "gallery" ? (
+          <GalleryMode
+            collection={workspace?.collection ?? null}
+            galleries={galleries}
+            artworks={galleryArtworks}
+            searchQuery={gallerySearchQuery}
+            selectedGalleryId={selectedGalleryId}
+            selectedArtworkId={selectedArtworkId}
+            previewUrls={galleryPreviewUrls}
+            onSelectGallery={(galleryId) => {
+              if (galleryId === null) {
+                setSelectedGalleryId(null);
+                setStatus("All Artwork selected");
+              } else {
+                void selectGallery(galleryId);
+              }
+            }}
+            onSelectArtwork={(artworkId) => {
+              setSelectedArtworkId(artworkId);
+              setInspectorTarget({ type: "artwork", artworkId });
+              setStatus("Artwork selected");
+            }}
+            onSearchQueryChange={setGallerySearchQuery}
+            onRequestPreview={requestArtworkPreview}
+            onOpenInWorkbench={(artworkId) => {
+              setViewMode("workbench");
+              void loadArtwork(artworkId);
+            }}
+          />
+        ) : null}
         <Allotment defaultSizes={[300, 720, 360]}>
           <Allotment.Pane minSize={240}>
             <section className="collection-explorer" aria-label="Collection Explorer">

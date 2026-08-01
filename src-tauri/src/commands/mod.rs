@@ -27,8 +27,8 @@ use crate::raremarq_export::{
     RaremarqCsvExportPlan, RaremarqCsvExportReport, RaremarqCsvExportScope, RaremarqCsvUrlMode,
 };
 use crate::scanner::{
-    attach_files_to_artwork, ensure_artwork_cache_derivatives,
-    ensure_artwork_cache_derivatives_with_warnings, generate_cache_derivatives_parallel,
+    attach_files_to_artwork, ensure_artwork_cache_derivatives_with_warnings,
+    ensure_artwork_preview, ensure_artwork_thumbnail, generate_cache_derivatives_parallel,
     preview_cache_work_items_for_collection, register_thumbnail_cache_work_result,
     thumbnail_cache_work_items_for_collection, thumbnail_cache_worker_count, AttachMode,
     CacheDerivativeOptions, ThumbnailCacheProgress, ThumbnailCacheWorkItem,

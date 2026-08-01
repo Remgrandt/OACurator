@@ -44,6 +44,19 @@ pub fn render(
     }
 }
 
+pub fn render_bounded_vips(
+    request: &RenderRequest,
+    plan: &RenderPlan,
+) -> std::result::Result<BackendRenderResult, RenderError> {
+    match vips::render_bounded(request, plan) {
+        Ok(result) => Ok(result),
+        Err(RenderError::RendererUnavailable { .. }) => {
+            render_with_primary_vips_backend(request, plan)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn render_old_jpeg_tiff_payload_fallback(
     request: &RenderRequest,
     plan: &RenderPlan,

@@ -859,6 +859,80 @@ pub fn ensure_artwork_cache_derivatives(
     Ok(profile)
 }
 
+pub fn ensure_artwork_thumbnail(
+    catalog: &Catalog,
+    artwork_id: i64,
+    cache_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    ensure_artwork_derivative(
+        catalog,
+        artwork_id,
+        cache_dir,
+        "thumbnail",
+        CacheDerivativeOptions {
+            create_thumbnail: true,
+            create_preview: false,
+        },
+    )
+}
+
+pub fn ensure_artwork_preview(
+    catalog: &Catalog,
+    artwork_id: i64,
+    cache_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    ensure_artwork_derivative(
+        catalog,
+        artwork_id,
+        cache_dir,
+        "preview",
+        CacheDerivativeOptions {
+            create_thumbnail: false,
+            create_preview: true,
+        },
+    )
+}
+
+fn ensure_artwork_derivative(
+    catalog: &Catalog,
+    artwork_id: i64,
+    cache_dir: &Path,
+    derivative_type: &str,
+    options: CacheDerivativeOptions,
+) -> Result<Option<PathBuf>> {
+    let detail = catalog.artwork_detail(artwork_id)?;
+    let Some(winner) = detail
+        .file_assets
+        .iter()
+        .find(|asset| asset.current_path.is_file() && is_supported_image(&asset.current_path))
+    else {
+        return Ok(None);
+    };
+    if let Some(path) = detail.derived_assets.iter().find_map(|derived| {
+        (derived.source_file_asset_id == Some(winner.id)
+            && derived.derivative_type == derivative_type
+            && derived.path.is_file())
+        .then(|| derived.path.clone())
+    }) {
+        return Ok(Some(path));
+    }
+
+    let generated = build_cached_derivatives_profiled(
+        artwork_id,
+        winner.id,
+        &winner.current_path,
+        cache_dir,
+        options,
+    )?;
+    let path = generated
+        .derivatives
+        .iter()
+        .find(|derived| derived.derivative_type == derivative_type)
+        .map(|derived| derived.path.clone());
+    register_cached_derivatives_session_only_profiled(catalog, generated)?;
+    Ok(path)
+}
+
 pub fn ensure_artwork_cache_derivatives_with_warnings(
     catalog: &Catalog,
     artwork_id: i64,

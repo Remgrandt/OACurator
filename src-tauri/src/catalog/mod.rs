@@ -3770,6 +3770,13 @@ impl Catalog {
                 FROM derived_asset da
                 LEFT JOIN file_asset fa ON fa.id = da.source_file_asset_id
                 WHERE da.artwork_id = a.id AND da.derivative_type = 'thumbnail'
+                  AND da.source_file_asset_id = (
+                    SELECT winner.id
+                    FROM file_asset winner
+                    WHERE winner.artwork_id = a.id
+                    ORDER BY winner.display_order, winner.is_primary DESC, winner.id
+                    LIMIT 1
+                  )
                 ORDER BY COALESCE(fa.display_order, 999999), fa.is_primary DESC, da.id
                 LIMIT 1
               ) AS thumbnail_path,
@@ -4061,6 +4068,13 @@ impl Catalog {
                     FROM derived_asset da
                     LEFT JOIN file_asset fa ON fa.id = da.source_file_asset_id
                     WHERE da.artwork_id = a.id AND da.derivative_type = 'thumbnail'
+                      AND da.source_file_asset_id = (
+                        SELECT winner.id
+                        FROM file_asset winner
+                        WHERE winner.artwork_id = a.id
+                        ORDER BY winner.display_order, winner.is_primary DESC, winner.id
+                        LIMIT 1
+                      )
                     ORDER BY COALESCE(fa.display_order, 999999), fa.is_primary DESC, da.id
                     LIMIT 1
                   ) AS thumbnail_path,
@@ -5362,6 +5376,13 @@ impl Catalog {
                 FROM derived_asset da
                 LEFT JOIN file_asset fa ON fa.id = da.source_file_asset_id
                 WHERE da.artwork_id = a.id AND da.derivative_type = 'thumbnail'
+                  AND da.source_file_asset_id = (
+                    SELECT winner.id
+                    FROM file_asset winner
+                    WHERE winner.artwork_id = a.id
+                    ORDER BY winner.display_order, winner.is_primary DESC, winner.id
+                    LIMIT 1
+                  )
                 ORDER BY COALESCE(fa.display_order, 999999), fa.is_primary DESC, da.id
                 LIMIT 1
               ) AS thumbnail_path,

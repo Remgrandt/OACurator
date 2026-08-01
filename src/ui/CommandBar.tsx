@@ -5,6 +5,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type CommandBarProps = {
   theme: "dark" | "light";
+  viewMode?: "workbench" | "gallery";
+  onViewModeChange?: (viewMode: "workbench" | "gallery") => void;
   onNewCollection: () => void;
   onOpenCollection: () => void;
   onCloseCollection: () => void;
@@ -52,6 +54,8 @@ const assetToolbarIcons = new Set([
 
 export function CommandBar({
   theme,
+  viewMode = "workbench",
+  onViewModeChange = () => {},
   onNewCollection,
   onOpenCollection,
   onCloseCollection,
@@ -303,6 +307,22 @@ export function CommandBar({
           disabled={!canCreateArtwork}
           onClick={onNewArtwork}
         />
+        <div className="view-mode-switch" role="group" aria-label="Application view">
+          <button
+            type="button"
+            aria-pressed={viewMode === "workbench"}
+            onClick={() => onViewModeChange("workbench")}
+          >
+            Workbench
+          </button>
+          <button
+            type="button"
+            aria-pressed={viewMode === "gallery"}
+            onClick={() => onViewModeChange("gallery")}
+          >
+            Gallery
+          </button>
+        </div>
         <span className="toolbar-spacer" aria-hidden="true" />
         <IconButton
           label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
