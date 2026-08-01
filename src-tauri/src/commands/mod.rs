@@ -28,10 +28,7 @@ use crate::raremarq_export::{
 };
 use crate::scanner::{
     attach_files_to_artwork, ensure_artwork_cache_derivatives_with_warnings,
-    ensure_artwork_preview, ensure_artwork_thumbnail, generate_cache_derivatives_parallel,
-    preview_cache_work_items_for_collection, register_thumbnail_cache_work_result,
-    thumbnail_cache_work_items_for_collection, thumbnail_cache_worker_count, AttachMode,
-    CacheDerivativeOptions, ThumbnailCacheProgress, ThumbnailCacheWorkItem,
+    ensure_artwork_preview, ensure_artwork_thumbnail, AttachMode,
 };
 use crate::snikt_import::{
     import_snikt_csv_into_collection_public_with_progress, import_snikt_csv_public_with_progress,
@@ -43,7 +40,6 @@ use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
 pub(crate) mod artwork;
-mod cache;
 pub(crate) mod exports;
 pub(crate) mod images;
 pub(crate) mod imports;

@@ -108,18 +108,6 @@ pub struct ThumbnailCacheWorkResult {
     pub result: std::result::Result<GeneratedCacheDerivatives, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThumbnailCacheProgress {
-    pub phase: String,
-    pub message: String,
-    pub total: usize,
-    pub completed: usize,
-    pub succeeded: usize,
-    pub failed: usize,
-    pub current_path: Option<PathBuf>,
-    pub done: bool,
-}
-
 pub fn attach_files_to_artwork(
     catalog: &Catalog,
     artwork_id: i64,

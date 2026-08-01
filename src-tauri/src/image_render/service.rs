@@ -7,11 +7,16 @@ use crate::image_render::recipe::{
 use crate::image_render::scheduler::{compile_render_plan, global_render_scheduler, RenderLimits};
 use crate::Result;
 use chrono::{DateTime, Utc};
+use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::PathBuf;
+use tiff::decoder::{ChunkType, Decoder, DecodingResult};
+use tiff::ColorType;
 
 const OVERSIZED_TIFF_PROXY_MAX_DIMENSION: u32 = 2048;
+const PIXEL_STEP_TIFF_SOURCE_BYTES: u64 = 128 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RenderPurpose {
@@ -97,13 +102,15 @@ fn render_image_to_file_inner(
     let source_width = source_metadata.width as u32;
     let source_height = source_metadata.height as u32;
     let fingerprint = source_fingerprint(&request, source_width, source_height)?;
-    let plan = match compile_render_plan(&request, source_width, source_height) {
-        Ok(plan) => plan,
-        Err(RenderError::SourceTooLarge { .. }) if should_use_oversized_tiff_proxy(&request) => {
-            return render_oversized_tiff_derivative(request, fingerprint);
-        }
-        Err(error) => return Err(error),
-    };
+    if should_use_oversized_tiff_proxy(
+        &request,
+        source_width,
+        source_height,
+        fingerprint.size_bytes,
+    ) {
+        return render_oversized_tiff_derivative(request, fingerprint);
+    }
+    let plan = compile_render_plan(&request, source_width, source_height)?;
     let recipe_json = serde_json::to_string(&request.recipe).map_err(|error| {
         RenderError::VerificationFailed {
             path: request.destination_path.clone(),
@@ -117,7 +124,12 @@ fn render_image_to_file_inner(
     verify_output(&request, rendered, fingerprint, recipe_key, recipe_json)
 }
 
-fn should_use_oversized_tiff_proxy(request: &RenderRequest) -> bool {
+fn should_use_oversized_tiff_proxy(
+    request: &RenderRequest,
+    source_width: u32,
+    source_height: u32,
+    source_size_bytes: u64,
+) -> bool {
     matches!(
         request.purpose,
         RenderPurpose::Thumbnail | RenderPurpose::Preview
@@ -126,6 +138,8 @@ fn should_use_oversized_tiff_proxy(request: &RenderRequest) -> bool {
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "tif" | "tiff"))
+        && (u64::from(source_width) * u64::from(source_height) > request.limits.max_source_pixels
+            || source_size_bytes > PIXEL_STEP_TIFF_SOURCE_BYTES)
 }
 
 fn render_oversized_tiff_derivative(
@@ -163,7 +177,10 @@ fn render_oversized_tiff_derivative(
     };
     let mut rendered = render_image_to_file_inner(proxy_request)?;
     rendered.source_fingerprint = source_fingerprint;
-    rendered.renderer = format!("oversized-tiff-proxy+{}", rendered.renderer);
+    rendered.renderer = format!(
+        "oversized-tiff-proxy+{proxy_renderer}+{}",
+        rendered.renderer
+    );
     let inner_options = serde_json::from_str::<serde_json::Value>(&rendered.renderer_options_json)
         .unwrap_or_else(|_| serde_json::Value::String(rendered.renderer_options_json.clone()));
     rendered.renderer_options_json = serde_json::json!({
@@ -215,28 +232,14 @@ fn render_oversized_tiff_proxy(
         source_metadata.width as u32,
         source_metadata.height as u32,
     )?;
-    let rendered = global_render_scheduler().with_permit(&plan, || {
-        backend::render_bounded_vips(&proxy_request, &plan)
+    global_render_scheduler().with_permit(&plan, || {
+        render_tiff_pixel_step_proxy(
+            &proxy_request.source_path,
+            &temporary_path,
+            plan.target_width,
+            plan.target_height,
+        )
     })?;
-    let renderer = rendered.renderer.clone();
-    let fingerprint = source_fingerprint(
-        &proxy_request,
-        source_metadata.width as u32,
-        source_metadata.height as u32,
-    )?;
-    let recipe_json = serde_json::to_string(&proxy_request.recipe).map_err(|error| {
-        RenderError::VerificationFailed {
-            path: temporary_path.clone(),
-            detail: error.to_string(),
-        }
-    })?;
-    verify_output(
-        &proxy_request,
-        rendered,
-        fingerprint,
-        recipe_key(proxy_request.purpose, &recipe_json),
-        recipe_json,
-    )?;
     if proxy_path.is_file() {
         fs::remove_file(proxy_path).map_err(|error| RenderError::EncodeFailed {
             path: proxy_path.to_path_buf(),
@@ -247,7 +250,182 @@ fn render_oversized_tiff_proxy(
         path: proxy_path.to_path_buf(),
         detail: error.to_string(),
     })?;
-    Ok(renderer)
+    Ok("tiff-pixel-step".to_string())
+}
+
+fn render_tiff_pixel_step_proxy(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    output_width: u32,
+    output_height: u32,
+) -> std::result::Result<(), RenderError> {
+    let file = File::open(source).map_err(|error| RenderError::DecodeFailed {
+        path: source.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+    let mut decoder =
+        Decoder::new(BufReader::new(file)).map_err(|error| RenderError::DecodeFailed {
+            path: source.to_path_buf(),
+            detail: error.to_string(),
+        })?;
+    let (source_width, source_height) =
+        decoder
+            .dimensions()
+            .map_err(|error| RenderError::DecodeFailed {
+                path: source.to_path_buf(),
+                detail: error.to_string(),
+            })?;
+    let color_type = decoder
+        .colortype()
+        .map_err(|error| RenderError::DecodeFailed {
+            path: source.to_path_buf(),
+            detail: error.to_string(),
+        })?;
+    let channels = tiff_channel_count(color_type).ok_or_else(|| RenderError::DecodeFailed {
+        path: source.to_path_buf(),
+        detail: format!("pixel-step TIFF proxy does not support {color_type:?}"),
+    })?;
+    let (chunk_width, chunk_height) = decoder.chunk_dimensions();
+    let chunks_across = source_width.div_ceil(chunk_width);
+    let chunks_down = source_height.div_ceil(chunk_height);
+    let chunk_count = match decoder.get_chunk_type() {
+        ChunkType::Strip => decoder.strip_count(),
+        ChunkType::Tile => decoder.tile_count(),
+    }
+    .map_err(|error| RenderError::DecodeFailed {
+        path: source.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+    if chunk_count != chunks_across * chunks_down {
+        return Err(RenderError::DecodeFailed {
+            path: source.to_path_buf(),
+            detail: "pixel-step TIFF proxy does not support planar image data".to_string(),
+        });
+    }
+
+    let sample_x = pixel_step_positions(source_width, output_width);
+    let sample_y = pixel_step_positions(source_height, output_height);
+    let mut output = RgbaImage::new(output_width, output_height);
+    for chunk_index in 0..chunk_count {
+        let chunk_x = chunk_index % chunks_across;
+        let chunk_y = chunk_index / chunks_across;
+        let source_x = chunk_x * chunk_width;
+        let source_y = chunk_y * chunk_height;
+        let (data_width, data_height) = decoder.chunk_data_dimensions(chunk_index);
+        let output_x_start = sample_x.partition_point(|&value| value < source_x);
+        let output_x_end = sample_x.partition_point(|&value| value < source_x + data_width);
+        let output_y_start = sample_y.partition_point(|&value| value < source_y);
+        let output_y_end = sample_y.partition_point(|&value| value < source_y + data_height);
+        if output_x_start == output_x_end || output_y_start == output_y_end {
+            continue;
+        }
+        let chunk = decoder
+            .read_chunk(chunk_index)
+            .map_err(|error| RenderError::DecodeFailed {
+                path: source.to_path_buf(),
+                detail: error.to_string(),
+            })?;
+        for (output_y, &sampled_y) in sample_y
+            .iter()
+            .enumerate()
+            .take(output_y_end)
+            .skip(output_y_start)
+        {
+            let chunk_pixel_y = sampled_y - source_y;
+            for (output_x, &sampled_x) in sample_x
+                .iter()
+                .enumerate()
+                .take(output_x_end)
+                .skip(output_x_start)
+            {
+                let chunk_pixel_x = sampled_x - source_x;
+                let sample_index = ((chunk_pixel_y * data_width + chunk_pixel_x) as usize)
+                    .checked_mul(channels)
+                    .ok_or_else(|| RenderError::DecodeFailed {
+                        path: source.to_path_buf(),
+                        detail: "TIFF sample index overflow".to_string(),
+                    })?;
+                let pixel = tiff_pixel(&chunk, color_type, sample_index).ok_or_else(|| {
+                    RenderError::DecodeFailed {
+                        path: source.to_path_buf(),
+                        detail: "TIFF chunk did not contain the expected pixel data".to_string(),
+                    }
+                })?;
+                output.put_pixel(output_x as u32, output_y as u32, Rgba(pixel));
+            }
+        }
+    }
+    output
+        .save_with_format(destination, image::ImageFormat::Png)
+        .map_err(|error| RenderError::EncodeFailed {
+            path: destination.to_path_buf(),
+            detail: error.to_string(),
+        })
+}
+
+fn pixel_step_positions(source_size: u32, output_size: u32) -> Vec<u32> {
+    (0..output_size)
+        .map(|index| {
+            (((u64::from(index) * 2 + 1) * u64::from(source_size)) / (u64::from(output_size) * 2))
+                .min(u64::from(source_size - 1)) as u32
+        })
+        .collect()
+}
+
+fn tiff_channel_count(color_type: ColorType) -> Option<usize> {
+    match color_type {
+        ColorType::Gray(8 | 16) => Some(1),
+        ColorType::GrayA(8 | 16) => Some(2),
+        ColorType::RGB(8 | 16) => Some(3),
+        ColorType::RGBA(8 | 16) | ColorType::CMYK(8 | 16) => Some(4),
+        ColorType::CMYKA(8 | 16) => Some(5),
+        _ => None,
+    }
+}
+
+fn tiff_pixel(
+    chunk: &DecodingResult,
+    color_type: ColorType,
+    sample_index: usize,
+) -> Option<[u8; 4]> {
+    let sample = |offset| tiff_sample(chunk, sample_index + offset);
+    match color_type {
+        ColorType::Gray(8 | 16) => {
+            let gray = sample(0)?;
+            Some([gray, gray, gray, 255])
+        }
+        ColorType::GrayA(8 | 16) => {
+            let gray = sample(0)?;
+            Some([gray, gray, gray, sample(1)?])
+        }
+        ColorType::RGB(8 | 16) => Some([sample(0)?, sample(1)?, sample(2)?, 255]),
+        ColorType::RGBA(8 | 16) => Some([sample(0)?, sample(1)?, sample(2)?, sample(3)?]),
+        ColorType::CMYK(8 | 16) | ColorType::CMYKA(8 | 16) => {
+            let cyan = u16::from(sample(0)?);
+            let magenta = u16::from(sample(1)?);
+            let yellow = u16::from(sample(2)?);
+            let black = u16::from(sample(3)?);
+            Some([
+                255 - (cyan + black).min(255) as u8,
+                255 - (magenta + black).min(255) as u8,
+                255 - (yellow + black).min(255) as u8,
+                if matches!(color_type, ColorType::CMYKA(_)) {
+                    sample(4)?
+                } else {
+                    255
+                },
+            ])
+        }
+        _ => None,
+    }
+}
+
+fn tiff_sample(chunk: &DecodingResult, index: usize) -> Option<u8> {
+    match chunk {
+        DecodingResult::U8(values) => values.get(index).copied(),
+        DecodingResult::U16(values) => values.get(index).map(|value| (value >> 8) as u8),
+        _ => None,
+    }
 }
 
 fn oversized_tiff_proxy_recipe() -> RenderRecipe {

@@ -605,17 +605,6 @@ export type OaaExportProgress = {
   total: number;
 };
 
-export type ThumbnailCacheProgress = {
-  phase: string;
-  message: string;
-  total: number;
-  completed: number;
-  succeeded: number;
-  failed: number;
-  current_path?: string | null;
-  done: boolean;
-};
-
 export type RaremarqCsvExportReport = {
   collection_id: number;
   csv_path: string;

@@ -122,7 +122,6 @@ import type {
   SniktMetadataForm,
   StartupBehaviorPreference,
   ThemePreference,
-  ThumbnailCacheProgress,
   UnreferencedArtworkReport,
   WorkspaceCommandMode,
   WorkspaceLoadProgress,
@@ -710,34 +709,6 @@ function WorkbenchApp() {
     let cleanup: (() => void) | undefined;
     void listen<OaaImportProgress>("oaa-import-progress", (event) => {
       setStatus(event.payload.message);
-    })
-      .then((unlisten) => {
-        if (cancelled) {
-          unlisten();
-        } else {
-          cleanup = unlisten;
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-      cleanup?.();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let cleanup: (() => void) | undefined;
-    void listen<ThumbnailCacheProgress>("thumbnail-cache-progress", (event) => {
-      const progress = event.payload;
-      if (progress.done && progress.failed > 0) {
-        setStatus(`${progress.message}; ${progress.failed} failed`);
-      } else if (progress.done) {
-        setStatus("Ready");
-      } else {
-        setStatus(progress.message);
-      }
     })
       .then((unlisten) => {
         if (cancelled) {

@@ -1,4 +1,3 @@
-use super::cache::start_thumbnail_cache_generation;
 use super::*;
 
 fn required_import_destination_root(
@@ -130,7 +129,6 @@ pub async fn import_oaa_archive_command(
     })
     .await
     .map_err(|error| format!("OAA import task failed: {error}"))??;
-    start_thumbnail_cache_generation(app, catalog, cache_dir, report.collection_id);
     Ok(report)
 }
 

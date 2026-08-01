@@ -1,4 +1,3 @@
-use super::cache::start_thumbnail_cache_generation;
 use super::*;
 
 #[tauri::command]
@@ -44,12 +43,6 @@ pub async fn open_collection_command(
     })
     .await
     .map_err(|error| format!("Open Collection task failed: {error}"))??;
-    start_thumbnail_cache_generation(
-        app,
-        state.catalog.clone(),
-        state.cache_dir.clone(),
-        collection.id,
-    );
     Ok(collection)
 }
 

@@ -7,34 +7,14 @@ use crate::image_render::service::RenderRequest;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-const BOUNDED_CACHE_BYTES: u64 = 64 * 1024 * 1024;
-const BOUNDED_RENDER_TIMEOUT: Duration = Duration::from_secs(300);
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn render(
     request: &RenderRequest,
     plan: &RenderPlan,
-) -> std::result::Result<BackendRenderResult, RenderError> {
-    render_impl(request, plan, false)
-}
-
-pub fn render_bounded(
-    request: &RenderRequest,
-    plan: &RenderPlan,
-) -> std::result::Result<BackendRenderResult, RenderError> {
-    render_impl(request, plan, true)
-}
-
-fn render_impl(
-    request: &RenderRequest,
-    plan: &RenderPlan,
-    bounded: bool,
 ) -> std::result::Result<BackendRenderResult, RenderError> {
     let vips = find_vips_tool("vips").ok_or_else(|| RenderError::RendererUnavailable {
         renderer: "libvips".to_string(),
@@ -53,13 +33,6 @@ fn render_impl(
     let render_path = path_with_output_extension(&request.destination_path, &output_format);
     let output_arg = output_argument(&render_path, &output_format);
     let mut command = vips_command(&vips);
-    if bounded {
-        command
-            .arg("--vips-concurrency=1")
-            .arg(format!("--vips-disc-threshold={BOUNDED_CACHE_BYTES}"))
-            .arg(format!("--vips-cache-max-memory={BOUNDED_CACHE_BYTES}"))
-            .arg("--vips-cache-max-files=20");
-    }
     command
         .arg("thumbnail")
         .arg(&request.source_path)
@@ -69,24 +42,12 @@ fn render_impl(
         .arg(plan.target_height.to_string())
         .arg("--size")
         .arg("down");
-    let output = if bounded {
-        command_output_with_timeout(command, BOUNDED_RENDER_TIMEOUT)
-    } else {
-        command.output()
-    }
-    .map_err(|error| {
-        if error.kind() == io::ErrorKind::TimedOut {
-            RenderError::DecodeFailed {
-                path: request.source_path.clone(),
-                detail: error.to_string(),
-            }
-        } else {
-            RenderError::RendererUnavailable {
-                renderer: "libvips".to_string(),
-                detail: error.to_string(),
-            }
-        }
-    })?;
+    let output = command
+        .output()
+        .map_err(|error| RenderError::RendererUnavailable {
+            renderer: "libvips".to_string(),
+            detail: error.to_string(),
+        })?;
     if !output.status.success() {
         return Err(RenderError::DecodeFailed {
             path: request.source_path.clone(),
@@ -125,38 +86,10 @@ fn render_impl(
             "tool": vips,
             "operation": "thumbnail",
             "size": "down",
-            "autorotate": true,
-            "bounded": bounded,
-            "cache_max_memory_bytes": bounded.then_some(BOUNDED_CACHE_BYTES),
-            "disc_threshold_bytes": bounded.then_some(BOUNDED_CACHE_BYTES),
-            "concurrency": bounded.then_some(1),
-            "timeout_seconds": bounded.then_some(BOUNDED_RENDER_TIMEOUT.as_secs())
+            "autorotate": true
         })
         .to_string(),
     })
-}
-
-fn command_output_with_timeout(mut command: Command, timeout: Duration) -> io::Result<Output> {
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn()?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output();
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "libvips exceeded the {} second render limit",
-                    timeout.as_secs()
-                ),
-            ));
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
 }
 
 fn path_with_output_extension(path: &Path, output_format: &OutputFormat) -> PathBuf {
