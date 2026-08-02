@@ -310,17 +310,19 @@ export function CommandBar({
         <div className="view-mode-switch" role="group" aria-label="Application view">
           <button
             type="button"
+            title="Manage records, metadata, files, and collection organization."
             aria-pressed={viewMode === "workbench"}
             onClick={() => onViewModeChange("workbench")}
           >
-            Workbench
+            Inventory
           </button>
           <button
             type="button"
+            title="Present and explore your artwork visually."
             aria-pressed={viewMode === "gallery"}
             onClick={() => onViewModeChange("gallery")}
           >
-            Gallery
+            Portfolio
           </button>
         </div>
         <span className="toolbar-spacer" aria-hidden="true" />

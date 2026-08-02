@@ -111,7 +111,7 @@ export function GalleryMode({
                 <input
                   type="range"
                   aria-label="Artwork size"
-                  min="160"
+                  min="120"
                   max="360"
                   step="20"
                   value={tileSize}
@@ -185,7 +185,7 @@ export function GalleryMode({
                     className="gallery-open-workbench"
                     onClick={() => onOpenInWorkbench(focusedArtwork.id)}
                   >
-                    Open in Workbench
+                    View artwork details
                   </button>
                 </div>
               </>
