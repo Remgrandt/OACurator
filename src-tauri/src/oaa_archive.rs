@@ -1346,6 +1346,9 @@ fn save_external_links(
     links: &[OaaExternalLink],
 ) -> Result<()> {
     for link in links {
+        let Some(link_type) = oac_artwork_identity_link_type_for_provider(&link.provider) else {
+            continue;
+        };
         let extensions_value = if link.extensions.is_empty() {
             None
         } else {
@@ -1353,7 +1356,7 @@ fn save_external_links(
         };
         catalog.upsert_artwork_external_link(
             artwork_id,
-            oac_link_type_for_provider(&link.provider),
+            link_type,
             Some(&link.id),
             &link.url,
             extensions_value.as_ref(),
@@ -1368,9 +1371,10 @@ fn existing_artwork_id_for_oaa_external_links(
 ) -> Result<Option<i64>> {
     let mut matched_artwork_id = None;
     for link in links {
-        let Some(artwork_id) = catalog
-            .artwork_id_for_external_id(oac_link_type_for_provider(&link.provider), &link.id)?
-        else {
+        let Some(link_type) = oac_artwork_identity_link_type_for_provider(&link.provider) else {
+            continue;
+        };
+        let Some(artwork_id) = catalog.artwork_id_for_external_id(link_type, &link.id)? else {
             continue;
         };
         if matched_artwork_id.is_some_and(|matched_id| matched_id != artwork_id) {
@@ -1798,12 +1802,12 @@ fn app_extension_string(extensions: &BTreeMap<String, Value>, key: &str) -> Opti
         .map(str::to_string)
 }
 
-fn oac_link_type_for_provider(provider: &str) -> &str {
+fn oac_artwork_identity_link_type_for_provider(provider: &str) -> Option<&str> {
     match provider {
-        "com.comicartfans" => "caf",
-        "com.snikt" => "snikt",
-        "com.raremarq" => "raremarq",
-        other => other,
+        "com.comicartfans" => Some("caf"),
+        "com.snikt" => Some("snikt"),
+        "com.raremarq" => Some("raremarq"),
+        _ => None,
     }
 }
 
