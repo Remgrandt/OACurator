@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use url::Url;
@@ -936,6 +936,23 @@ struct CafCsvArtworkRow {
     personal_notes: Option<String>,
 }
 
+const CAF_CSV_HEADERS: [&str; 12] = [
+    "image_link",
+    "title",
+    "artists",
+    "media_type",
+    "art_type",
+    "for_sale",
+    "added_to_caf",
+    "description",
+    "purchase_date",
+    "purchase_price",
+    "estimated_value",
+    "personal_notes",
+];
+
+const CAF_BROWSER_SAVE_ERROR: &str = "This file is not the raw CAF CSV text. It appears to have been saved directly from a web browser, which can save a webpage or reformat the text.";
+
 impl CafCsvArtworkRow {
     fn into_imported_artwork(self) -> ImportedCafImageArtwork {
         ImportedCafImageArtwork {
@@ -979,6 +996,7 @@ impl CafCsvArtworkRow {
 }
 
 fn parse_caf_csv(path: &Path) -> Result<CafCsvDocument> {
+    validate_caf_csv_source(path)?;
     let mut reader = csv::ReaderBuilder::new()
         .flexible(true)
         .trim(csv::Trim::All)
@@ -1034,6 +1052,54 @@ fn parse_caf_csv(path: &Path) -> Result<CafCsvDocument> {
         skipped_rows,
         messages,
     })
+}
+
+fn validate_caf_csv_source(path: &Path) -> Result<()> {
+    let mut file = fs::File::open(path)
+        .map_err(|error| AppError::Message(format!("Could not open CAF CSV: {error}")))?;
+    let mut bytes = [0; 4096];
+    let byte_count = file
+        .read(&mut bytes)
+        .map_err(|error| AppError::Message(format!("Could not read CAF CSV: {error}")))?;
+    let prefix = String::from_utf8_lossy(&bytes[..byte_count]);
+    let lines = prefix.lines().take(3).collect::<Vec<_>>();
+    let first_line_headers = normalized_header_fields(lines.first().copied().unwrap_or_default());
+
+    if !first_line_headers
+        .iter()
+        .any(|header| header == "image_link")
+        || caf_header_is_browser_wrapped(&lines, &first_line_headers)
+    {
+        return Err(AppError::Message(CAF_BROWSER_SAVE_ERROR.to_string()));
+    }
+
+    Ok(())
+}
+
+fn caf_header_is_browser_wrapped(lines: &[&str], first_line_headers: &[String]) -> bool {
+    if first_line_headers.is_empty()
+        || first_line_headers.len() >= CAF_CSV_HEADERS.len()
+        || !first_line_headers
+            .iter()
+            .zip(CAF_CSV_HEADERS)
+            .all(|(actual, expected)| actual == expected)
+    {
+        return false;
+    }
+
+    lines
+        .iter()
+        .flat_map(|line| normalized_header_fields(line))
+        .take(CAF_CSV_HEADERS.len())
+        .map(|header| header.to_string())
+        .eq(CAF_CSV_HEADERS.map(str::to_string))
+}
+
+fn normalized_header_fields(line: &str) -> Vec<String> {
+    line.split(',')
+        .map(normalize_caf_csv_header)
+        .filter(|header| !header.is_empty())
+        .collect()
 }
 
 fn parse_caf_csv_row(
@@ -1104,7 +1170,10 @@ fn normalized_csv_header_indexes(headers: &csv::StringRecord) -> BTreeMap<String
 }
 
 fn normalize_caf_csv_header(header: &str) -> String {
-    header.trim().to_ascii_lowercase()
+    header
+        .trim()
+        .trim_start_matches('\u{feff}')
+        .to_ascii_lowercase()
 }
 
 fn csv_optional_value(

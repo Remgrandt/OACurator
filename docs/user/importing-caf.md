@@ -10,6 +10,28 @@ Use a CAF CSV export file from disk. CAF exposes this from:
 
 On that page, look for the link labeled "CLICK HERE TO DOWNLOAD A CSV FILE OF YOUR CAF GALLERY ARTWORKS".
 
+## Save the CAF Report as CSV
+
+CAF opens the report as CSV text in a new browser tab. Do not use your browser's **Save Page** or **Save As** command. Those commands can save a webpage or reformat the text instead of creating a usable CSV file.
+
+### Windows
+
+1. Click the CAF **Download Artwork** link.
+2. In the new tab, press **Ctrl+A**, then **Ctrl+C**.
+3. Open Notepad and paste the copied text.
+4. Choose **File > Save As**.
+5. Enter `Artwork.csv`, choose **All Files** as the file type and **UTF-8** as the encoding, then save it.
+
+### macOS
+
+1. Click the CAF **Download Artwork** link.
+2. In the new tab, press **Command-A**, then **Command-C**.
+3. Open TextEdit and choose **Format > Make Plain Text**.
+4. Paste the copied text.
+5. Save it as `Artwork.csv`. If TextEdit asks which extension to use, choose **Use .csv**, not `.txt`.
+
+Before importing, you can open the file in a spreadsheet app. Its first columns should be `image_link`, `title`, `artists`, `media_type`, and `art_type`.
+
 The CSV import does not crawl ComicArtFans pages and does not download images. It reads the CSV rows, uses the CSV image URL to identify CAF Collection/Gallery values and dedupe records, and imports the metadata available in the file.
 
 ComicArtFans terms are at [https://www.comicartfans.com/termsconditions.asp](https://www.comicartfans.com/termsconditions.asp) and prohibit scraping. OA Curator imports CAF data only through the CSV export file you download from your own account.

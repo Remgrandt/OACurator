@@ -128,7 +128,7 @@ import type {
   WorkspaceState,
   GallerySummary,
 } from "./domain/types";
-import { openUserGuideWindow } from "./help/openUserGuideWindow";
+import { openCafImportGuideWindow, openUserGuideWindow } from "./help/openUserGuideWindow";
 import { finishStartupTrace, markStartupTrace } from "./startupTrace";
 import { CommandBar, ToolbarIcon } from "./ui/CommandBar";
 import { StatusBar } from "./ui/StatusBar";
@@ -2586,6 +2586,18 @@ function WorkbenchApp() {
       return await invoke<CafImportReport>("import_caf_csv_command", { request });
     } catch (caught) {
       const message = errorMessage(caught);
+      if (isCafBrowserSavedFileError(message)) {
+        const shouldOpenHelp = await confirmDialog(
+          "OA Curator found a webpage or browser-reformatted text instead of CAF's raw CSV text. Do not use Save Page or Save As in your browser. CAF requires you to copy the report text into a plain-text editor and save it with a .csv extension.",
+          {
+            title: "CAF CSV Was Saved Incorrectly",
+            kind: "warning",
+            okLabel: "Open Instructions",
+            cancelLabel: "Close",
+          },
+        );
+        if (shouldOpenHelp) await openCafImportGuideWindow();
+      }
       if (request.target_collection_id && isCafCollectionIdMismatchError(message)) {
         const shouldOverride = await confirmDialog(
           `${message}\n\nImporting this CSV will replace the Collection's tracked CAF Collection ID. Continue?`,
@@ -7142,6 +7154,10 @@ function openExternalBrowserUrl(url: string): Promise<void> {
 
 function isCafCollectionIdMismatchError(message: string): boolean {
   return message.includes("is already linked to CAF Collection");
+}
+
+function isCafBrowserSavedFileError(message: string): boolean {
+  return message.includes("not the raw CAF CSV text");
 }
 
 function isTauriIpcUnavailable(caught: unknown): boolean {
