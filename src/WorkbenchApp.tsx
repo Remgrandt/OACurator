@@ -168,7 +168,7 @@ type ExplorerContextItem =
   | { type: "collection"; collection: CollectionSummary }
   | { type: "gallery"; gallery: GallerySummary; collectionId: number | null }
   | { type: "artwork"; artwork: ArtworkSummary; galleryId: number }
-  | { type: "file"; file: CarouselImageItem; artworkId: number };
+  | { type: "file"; file: CarouselImageItem; artworkId: number; galleryId: number };
 type ExplorerContextMenu = {
   x: number;
   y: number;
@@ -5044,7 +5044,7 @@ function WorkbenchApp() {
           </span>
           <span className="tree-action-gutter" aria-hidden="true" />
         </div>
-        {filesExpanded && fileItems.map((item) => renderFileTreeNode(artwork.id, item))}
+        {filesExpanded && fileItems.map((item) => renderFileTreeNode(artwork.id, gallery.id, item))}
       </div>
     );
   }
@@ -5065,7 +5065,7 @@ function WorkbenchApp() {
     );
   }
 
-  function renderFileTreeNode(artworkId: number, item: CarouselImageItem) {
+  function renderFileTreeNode(artworkId: number, galleryId: number, item: CarouselImageItem) {
     const selected = selectedCarouselItem?.key === item.key;
     return (
       <div
@@ -5075,14 +5075,14 @@ function WorkbenchApp() {
         key={item.key}
         tabIndex={0}
         onKeyDown={(event) =>
-          handleExplorerItemKeyDown(event, { type: "file", file: item, artworkId })
+          handleExplorerItemKeyDown(event, { type: "file", file: item, artworkId, galleryId })
         }
         onContextMenu={(event) =>
-          openExplorerContextMenu(event, { type: "file", file: item, artworkId })
+          openExplorerContextMenu(event, { type: "file", file: item, artworkId, galleryId })
         }
       >
         <span className="tree-disclosure" />
-        {isRenamingExplorerItem({ type: "file", file: item, artworkId }) ? (
+        {isRenamingExplorerItem({ type: "file", file: item, artworkId, galleryId }) ? (
           <span className={`tree-row-static ${selected ? "active-file" : ""}`}>
             <span className="tree-icon" aria-hidden="true" />
             {renderExplorerRenameInput("Rename File")}
@@ -6437,7 +6437,7 @@ function WorkbenchApp() {
         artworkId: item.artwork.id,
         title: value,
       });
-      if (detail?.id === item.artwork.id) {
+      if (selectedArtworkIdRef.current === item.artwork.id) {
         const nextForm = setArtworkDetailFromSnapshot(nextDetail);
         markMetadataAutosaveBaseline(nextDetail.id, nextForm);
       }
@@ -6465,7 +6465,7 @@ function WorkbenchApp() {
     const renameResult = await invoke<FileRenameResult>("execute_file_rename_command", {
       request: renameRequest,
     });
-    if (detail?.id === item.artworkId) {
+    if (selectedArtworkIdRef.current === item.artworkId) {
       applyArtworkDetailUpdate(renameResult.detail);
     }
     return "renamed";
@@ -6996,8 +6996,10 @@ function explorerItemTypeLabel(item: ExplorerContextItem): string {
 function explorerItemKey(item: ExplorerContextItem): string {
   if (item.type === "collection") return `collection:${item.collection.id}`;
   if (item.type === "gallery") return `gallery:${item.gallery.id}`;
-  if (item.type === "artwork") return `artwork:${item.artwork.id}`;
-  return `${item.file.kind}:${item.file.id}`;
+  // A shared artwork (and its files) can appear under multiple expanded galleries.
+  // Only the occurrence where rename was started should mount an autofocus input.
+  if (item.type === "artwork") return `gallery:${item.galleryId}:artwork:${item.artwork.id}`;
+  return `gallery:${item.galleryId}:artwork:${item.artworkId}:${item.file.kind}:${item.file.id}`;
 }
 
 function explorerRenameValue(item: ExplorerContextItem): string {
