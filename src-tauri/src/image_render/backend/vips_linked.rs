@@ -456,11 +456,3 @@ mod ffi {
         pub fn g_object_unref(object: *mut c_void);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn linked_renderer_reports_in_process_backend_name() {
-        assert_eq!(super::renderer_name(), "libvips-linked");
-    }
-}

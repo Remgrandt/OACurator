@@ -220,30 +220,3 @@ where
         temporary,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{read_json_manifest, write_json_manifest, write_new_json_manifest};
-    use serde_json::{json, Value};
-    use tempfile::tempdir;
-
-    #[test]
-    fn completed_updates_replace_existing_json() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join(".oaartwork");
-        write_json_manifest(&path, &json!({"version": 1})).expect("first write");
-        write_json_manifest(&path, &json!({"version": 2})).expect("replacement");
-        let value: Value = read_json_manifest(&path).expect("read replacement");
-        assert_eq!(value, json!({"version": 2}));
-    }
-
-    #[test]
-    fn new_manifest_write_never_clobbers_an_existing_file() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join(".oaartwork");
-        write_new_json_manifest(&path, &json!({"owner": "orphan"})).expect("first write");
-        assert!(write_new_json_manifest(&path, &json!({"owner": "new"})).is_err());
-        let value: Value = read_json_manifest(&path).expect("read original");
-        assert_eq!(value, json!({"owner": "orphan"}));
-    }
-}

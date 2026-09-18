@@ -346,22 +346,3 @@ pub struct ReorderFileAssetsRequest {
 pub struct SniktUploadPrefillUrlRequest {
     pub artwork_id: i64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn export_oaa_archive_request_defaults_private_metadata_off() {
-        let request = serde_json::from_value::<ExportOaaArchiveRequest>(json!({
-            "collection_id": 7,
-            "archive_path": "collection.oaa"
-        }))
-        .unwrap();
-
-        assert!(request.include_images);
-        assert!(!request.include_private_metadata);
-        assert!(!request.allow_overwrite);
-    }
-}

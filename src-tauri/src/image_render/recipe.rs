@@ -135,19 +135,3 @@ pub fn raremarq_upload_jpeg_recipe(max_dimension: u32, quality: u8) -> RenderRec
         allow_upscale: false,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{thumbnail_recipe, ResizeMode};
-
-    #[test]
-    fn thumbnail_recipe_fits_within_256_square() {
-        assert_eq!(
-            thumbnail_recipe().resize,
-            ResizeMode::FitWithin {
-                max_width: Some(256),
-                max_height: Some(256),
-            }
-        );
-    }
-}

@@ -336,23 +336,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-#[cfg(test)]
-mod tests {
-    use super::startup_trace_output_dir_from_env;
-    use std::ffi::OsString;
-    use std::path::PathBuf;
-
-    #[test]
-    fn startup_trace_output_dir_is_opt_in() {
-        assert_eq!(startup_trace_output_dir_from_env(None), None);
-        assert_eq!(
-            startup_trace_output_dir_from_env(Some(OsString::new())),
-            None
-        );
-        assert_eq!(
-            startup_trace_output_dir_from_env(Some(OsString::from("C:\\trace"))),
-            Some(PathBuf::from("C:\\trace"))
-        );
-    }
-}

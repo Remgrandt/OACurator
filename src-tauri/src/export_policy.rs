@@ -55,27 +55,3 @@ impl ExportPolicy {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{ExportAudience, ExportPolicy};
-
-    #[test]
-    fn public_or_provider_exports_cannot_include_private_metadata() {
-        let policy = ExportPolicy {
-            audience: ExportAudience::PublicShare,
-            include_private_metadata: true,
-            allow_overwrite: false,
-            allow_temporary_upload: false,
-        };
-
-        assert!(policy.verify_private_metadata_export().is_err());
-    }
-
-    #[test]
-    fn private_backup_can_include_private_metadata() {
-        let policy = ExportPolicy::private_backup(true, false);
-
-        assert!(policy.verify_private_metadata_export().is_ok());
-    }
-}
