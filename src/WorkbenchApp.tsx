@@ -623,7 +623,11 @@ function WorkbenchApp() {
   }, [selectedArtworkId]);
 
   useEffect(() => {
-    function closeExplorerContextMenu() {
+    function closeExplorerContextMenuOnPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".explorer-context-menu")) {
+        return;
+      }
       setExplorerContextMenu(null);
     }
 
@@ -633,10 +637,10 @@ function WorkbenchApp() {
       }
     }
 
-    window.addEventListener("click", closeExplorerContextMenu);
+    window.addEventListener("pointerdown", closeExplorerContextMenuOnPointerDown);
     window.addEventListener("keydown", closeExplorerContextMenuOnEscape);
     return () => {
-      window.removeEventListener("click", closeExplorerContextMenu);
+      window.removeEventListener("pointerdown", closeExplorerContextMenuOnPointerDown);
       window.removeEventListener("keydown", closeExplorerContextMenuOnEscape);
     };
   }, []);
@@ -5133,6 +5137,7 @@ function WorkbenchApp() {
         onFocus={(event) => event.currentTarget.select()}
         onClick={(event) => event.stopPropagation()}
         onMouseDown={(event) => event.stopPropagation()}
+        onBlur={(event) => void commitPendingRename(event.currentTarget.value)}
         onChange={(event) => {
           const nextValue = event.currentTarget.value;
           setPendingRename((current) => (current ? { ...current, value: nextValue } : current));
