@@ -55,5 +55,11 @@ legacy 0.1 import, both import destinations, export privacy, retained metadata,
 ZIP64 and malformed ZIP streams, capacity outcomes, and destination path safety.
 Exported archives are also checked with the pinned reference validator above.
 
+Windows verification on 2026-10-03 for [the OAA 1.0 production update](https://github.com/Remgrandt/OACurator/commit/f98ca964911098cf7a26a5768f532e2b3865457d):
+
+- `npm run check:release` passed.
+- The isolated regression run passed 160 backend integration tests and 210 frontend tests. Four existing benchmark tests were ignored, and one private-maintainer documentation check was excluded from the public-source run.
+- The official OAA 1.0 validator accepted all 12 generated archives, covering three independent fixture families, both import destinations, and private/default export options.
+
 The verification evidence is from Windows. macOS/Linux extraction and packaging
 require their platform checks; archive validity alone does not establish those claims.
