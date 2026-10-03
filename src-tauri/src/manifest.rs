@@ -7,11 +7,12 @@ use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
 
-pub const SCHEMA_VERSION: &str = "0.1";
+pub const SCHEMA_VERSION: &str = "1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManifestReference {
     pub id: String,
+    #[serde(default)]
     pub name: String,
     pub path: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -118,6 +119,8 @@ pub struct ArtworkPrivateMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtworkArtistCredit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_name: Option<String>,
@@ -135,10 +138,13 @@ pub struct ArtworkFileManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "optional_integer")]
     pub size_bytes: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "optional_integer")]
     pub width: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "optional_integer")]
     pub height: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dpi_x: Option<f64>,
@@ -156,6 +162,32 @@ pub struct ArtworkFileManifest {
     pub external_links: Vec<ExternalLinkManifest>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, Value>,
+}
+
+pub(crate) fn optional_integer<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<i64>, D::Error> {
+    let value = Option::<serde_json::Number>::deserialize(deserializer)?;
+    value
+        .map(|n| {
+            n.as_i64()
+                .or_else(|| {
+                    n.as_f64()
+                        .filter(|n| {
+                            n.is_finite()
+                                && n.fract() == 0.0
+                                && *n >= 0.0
+                                && *n < 9223372036854775808.0
+                        })
+                        .map(|n| n as i64)
+                })
+                .ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "OAA capacity_exceeded: integer exceeds supported range",
+                    )
+                })
+        })
+        .transpose()
 }
 
 pub fn read_json_manifest<T>(path: &Path) -> Result<T>

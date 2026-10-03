@@ -81,7 +81,11 @@ for (const [arch, expectedPackage] of [
 
 const windowsInstaller = readRequiredText(windowsInstallerPath);
 requireContains(windowsInstaller, "libvips-runtime-lock.json", windowsInstallerPath);
-requireContains(windowsInstaller, "Get-FileHash", windowsInstallerPath);
+requireContains(
+  windowsInstaller,
+  "$actualHash = Get-Sha256Hex -Path $zipPath",
+  windowsInstallerPath,
+);
 requireContains(windowsInstaller, "SHA256", windowsInstallerPath);
 
 const macosInstaller = readRequiredText(macosInstallerPath);

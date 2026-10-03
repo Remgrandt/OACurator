@@ -2,7 +2,7 @@
 
 ![Original Art Archive logo](assets/oaa-logo.svg){ .oaa-doc-logo }
 
-Use **File > Export OAA Archive** to write the open Collection as an `.oaa` package.
+Use **File > Export OAA Archive** to write the open Collection as an OAA 1.0 `.oaa` package.
 
 OAA is the preferred OA Curator backup and interchange format. It is an open ZIP-based package with plain text manifests, so it is readable, editable, and suitable for long-term preservation.
 
@@ -10,15 +10,17 @@ OAA is the preferred OA Curator backup and interchange format. It is an open ZIP
 
 The export wizard lets you choose whether to include artwork files and private collector metadata.
 
-- **Include artwork files** creates a self-contained archive. Linked files are copied into the OAA package as OAA-local embedded files. The open Collection is not changed.
+- **Include artwork files** embeds the files allowed by your privacy choice. Linked files are copied into the OAA package as OAA-local embedded files. The open Collection is not changed.
 - **Metadata only** writes Collection, Gallery, Artwork, and external-site metadata without embedding image files.
-- **Include private collector metadata** includes purchase, value, provenance, and personal note fields. Leave this enabled for a private backup. Turn it off before making an archive for public sharing.
+- **Include private collector metadata** is off by default. Off excludes purchase, value, provenance, personal notes, all extension data, and supporting attachments. Turn it on for a private backup that includes those fields, retained gallery-site data, and all selected attachments.
 
-The wizard stays open and shows progress until the archive is finished.
+The wizard stays open and shows progress until the archive is finished. OA Curator validates the completed archive before placing it at the final path. Existing output requires overwrite approval.
+
+Included JPG, PNG, and TIFF files are copied unchanged. Their visible contents and embedded metadata may still be private. Review the selected Collection, descriptions, external links, and images before sharing. An Artwork marked public does not authorize disclosure of its private fields or attachments.
 
 ## External Site Data
 
-OAA can carry OA Curator-native metadata plus CAF, SNIKT.com, and Raremarq gallery site data through extension fields.
+Private backups retain imported links, including unrecognized external sites, and supported extension blocks. Export is not a byte-for-byte copy of an imported archive: local IDs, paths, and some values are normalized; unreferenced extras, unknown optional fields, and reference or artist-credit extensions may be lost. Keep the original archive for exact preservation.
 
 ## Backup Advice
 

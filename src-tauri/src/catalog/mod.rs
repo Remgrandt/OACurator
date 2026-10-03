@@ -22,6 +22,7 @@ mod consistency;
 mod delete;
 mod manifests;
 mod models;
+mod oaa;
 mod orphans;
 
 pub use consistency::{
@@ -318,6 +319,9 @@ impl Catalog {
     pub fn init(&self) -> Result<()> {
         let conn = self.lock()?;
         conn.execute_batch(include_str!("../../migrations/0001_initial_schema.sql"))?;
+        conn.execute_batch(include_str!(
+            "../../migrations/0002_oaa_collection_registry.sql"
+        ))?;
         migrate_durable_diagnostic_tables(&conn)?;
         add_column_if_missing(&conn, "external_link", "extensions_json", "TEXT")?;
         add_column_if_missing(&conn, "artwork", "caf_csv_image_link", "TEXT")?;
@@ -348,6 +352,7 @@ impl Catalog {
             DELETE FROM derived_asset;
             DELETE FROM file_asset;
             DELETE FROM gallery_artwork;
+            DELETE FROM collection_artwork;
             DELETE FROM collection_gallery;
             DELETE FROM artwork;
             DELETE FROM artist;
@@ -710,10 +715,13 @@ impl Catalog {
                     &gallery_manifest.extensions,
                 )?;
                 profiler.profile.gallery_upsert_and_link_ms += elapsed_ms(upsert_started);
+                self.save_oaa_links("gallery", gallery.id, &gallery_manifest.external_links)?;
                 opened_gallery_manifests.push((gallery, gallery_manifest));
             }
         }
+        self.save_oaa_links("collection", id, &manifest.external_links)?;
         self.open_collection_artworks_from_manifest_tree(
+            id,
             &manifest_path,
             &manifest.artworks,
             &opened_gallery_manifests,
@@ -734,6 +742,7 @@ impl Catalog {
 
     fn open_collection_artworks_from_manifest_tree(
         &self,
+        collection_id: i64,
         collection_manifest_path: &Path,
         artwork_references: &[ArtworkManifestReference],
         gallery_manifests: &[(GallerySummary, GalleryManifest)],
@@ -750,7 +759,6 @@ impl Catalog {
                     .push(gallery.id);
             }
         }
-        let fallback_gallery_id = gallery_manifests.first().map(|(gallery, _)| gallery.id);
 
         let total = artwork_references.len();
         for (index, reference) in artwork_references.iter().enumerate() {
@@ -790,19 +798,15 @@ impl Catalog {
                 )));
             }
 
-            let mut member_gallery_ids = gallery_membership_by_artwork
+            let member_gallery_ids = gallery_membership_by_artwork
                 .get(&artwork_manifest.id)
                 .cloned()
                 .unwrap_or_default();
-            if member_gallery_ids.is_empty() {
-                if let Some(gallery_id) = fallback_gallery_id {
-                    member_gallery_ids.push(gallery_id);
-                }
-            }
 
             let row_started = Instant::now();
             let artwork_id =
                 self.upsert_artwork_manifest_row(&artwork_manifest_path, &artwork_manifest)?;
+            self.link_oaa_artwork_to_collection(collection_id, artwork_id)?;
             profile.artwork_row_upsert_ms += elapsed_ms(row_started);
             let membership_started = Instant::now();
             for gallery_id in member_gallery_ids {
@@ -909,8 +913,7 @@ impl Catalog {
         manifest: &ArtworkManifest,
         profile: &mut CollectionOpenDebugProfile,
     ) -> Result<()> {
-        self.save_metadata_from_artwork_manifest(artwork_id, manifest)?;
-        self.save_artwork_external_links_from_manifest(artwork_id, &manifest.external_links)?;
+        self.import_oaa_artwork_metadata(artwork_id, manifest)?;
         self.save_manifest_extension_blocks("artwork", artwork_id, &manifest.extensions)?;
         if let Some(public_metadata) = manifest.public_metadata.as_ref() {
             self.save_manifest_extension_blocks(
@@ -928,150 +931,6 @@ impl Catalog {
         }
         profile.files_imported +=
             self.import_file_assets_from_artwork_manifest(artwork_id, manifest_path, manifest)?;
-        Ok(())
-    }
-
-    fn save_metadata_from_artwork_manifest(
-        &self,
-        artwork_id: i64,
-        manifest: &ArtworkManifest,
-    ) -> Result<()> {
-        let public = manifest.public_metadata.as_ref();
-        let private = manifest.private_metadata.as_ref();
-        let public_extensions = public.map(|metadata| &metadata.extensions);
-        let caf_extension =
-            public_extensions.and_then(|extensions| extensions.get("com.comicartfans"));
-        let caf_csv_image_link = caf_extension
-            .and_then(|extension| extension.get("csv_image_link"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        let caf_csv_added_to_caf = caf_extension
-            .and_then(|extension| extension.get("csv_added_to_caf"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        let snikt_csv_created_date = public_extensions
-            .and_then(|extensions| extensions.get("com.snikt"))
-            .and_then(|extension| extension.get("metadata"))
-            .and_then(|metadata| metadata.get("csv_created_date"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string);
-        let publication_status_id = caf_extension
-            .and_then(|extension| extension.get("publication_status_id"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .or_else(
-                || match public.and_then(|metadata| metadata.publication_status.as_deref()) {
-                    Some("published_art") => Some("1".to_string()),
-                    Some("unpublished_art") => Some("2".to_string()),
-                    _ => None,
-                },
-            );
-        let update = MetadataUpdate {
-            artwork_id,
-            title: manifest.title.clone(),
-            description: public.and_then(|metadata| metadata.description.clone()),
-            for_sale_status: public.and_then(|metadata| metadata.for_sale_status.clone()),
-            media_type_id: caf_extension
-                .and_then(|extension| extension.get("media_type_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .or_else(|| {
-                    public
-                        .and_then(|metadata| metadata.media.as_deref())
-                        .and_then(media_type_id_for_label)
-                        .map(str::to_string)
-                }),
-            art_type_id: caf_extension
-                .and_then(|extension| extension.get("art_type_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .or_else(|| {
-                    public
-                        .and_then(|metadata| metadata.artwork_type.as_deref())
-                        .and_then(art_type_id_for_label)
-                        .map(str::to_string)
-                }),
-            publication_status_id,
-            active: public
-                .and_then(|metadata| metadata.is_public)
-                .unwrap_or(true),
-            illustration_exchange: caf_extension
-                .and_then(|extension| extension.get("illustration_exchange"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            ix_for_sale: caf_extension
-                .and_then(|extension| extension.get("ix_for_sale"))
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            artist_credits: public
-                .map(|metadata| {
-                    metadata
-                        .artist_credits
-                        .iter()
-                        .map(|credit| ArtistCreditUpdate {
-                            first_name: credit.first_name.clone(),
-                            last_name: credit.last_name.clone(),
-                            role_id: credit
-                                .role
-                                .as_deref()
-                                .and_then(artist_role_id_for_label)
-                                .map(str::to_string),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            media: public.and_then(|metadata| metadata.media.clone()),
-            format: public.and_then(|metadata| metadata.artwork_type.clone()),
-            caf_url: provider_url(&manifest.external_links, "com.comicartfans"),
-            snikt_url: provider_url(&manifest.external_links, "com.snikt"),
-            raremarq_url: provider_url(&manifest.external_links, "com.raremarq"),
-            generic_url: app_extension_string(&manifest.extensions, "generic_url"),
-            snikt_metadata: public_extensions
-                .and_then(|extensions| extensions.get("com.snikt"))
-                .and_then(|extension| extension.get("metadata"))
-                .cloned()
-                .map(serde_json::from_value)
-                .transpose()?,
-            purchase_price: private.and_then(|metadata| metadata.purchase_price.clone()),
-            estimated_value: private.and_then(|metadata| metadata.estimated_value.clone()),
-            purchase_date: private.and_then(|metadata| metadata.purchase_date.clone()),
-            provenance: private.and_then(|metadata| metadata.provenance.clone()),
-            personal_notes: private.and_then(|metadata| metadata.personal_notes.clone()),
-        };
-        self.save_metadata_session_only(update)?;
-        self.update_caf_csv_tracking(
-            artwork_id,
-            caf_csv_image_link.as_deref(),
-            caf_csv_added_to_caf.as_deref(),
-        )?;
-        self.update_snikt_csv_tracking(artwork_id, snikt_csv_created_date.as_deref())
-    }
-
-    fn save_artwork_external_links_from_manifest(
-        &self,
-        artwork_id: i64,
-        links: &[ExternalLinkManifest],
-    ) -> Result<()> {
-        for link in links {
-            let Some(link_type) = oac_artwork_identity_link_type_for_provider(&link.provider)
-            else {
-                continue;
-            };
-            let extensions_value = if link.extensions.is_empty() {
-                None
-            } else {
-                Some(serde_json::Value::Object(
-                    link.extensions.clone().into_iter().collect(),
-                ))
-            };
-            self.upsert_artwork_external_link(
-                artwork_id,
-                link_type,
-                Some(&link.id),
-                &link.url,
-                extensions_value.as_ref(),
-            )?;
-        }
         Ok(())
     }
 
@@ -1140,6 +999,7 @@ impl Catalog {
                     derivative.id,
                     &file.extensions,
                 )?;
+                self.save_oaa_file("derived_asset", derivative.id, file)?;
                 imported += 1;
             } else {
                 let image_role = manifest_image_role(file.image_role.as_deref(), &file.extensions);
@@ -1184,6 +1044,7 @@ impl Catalog {
                     )?;
                 }
                 self.save_manifest_extension_blocks("file_asset", file_asset_id, &file.extensions)?;
+                self.save_oaa_file("file_asset", file_asset_id, file)?;
                 source_file_ids_by_manifest_id.insert(file.id.clone(), file_asset_id);
                 imported += 1;
             }
@@ -1527,46 +1388,6 @@ impl Catalog {
             conn.execute(
                 "UPDATE gallery SET caf_gallery_room_id = ?1, updated_at = ?2 WHERE id = ?3",
                 params![caf_gallery_room_id, now, gallery_id],
-            )?;
-        }
-        self.rewrite_gallery_manifest(gallery_id)?;
-        self.gallery_summary(gallery_id)
-    }
-
-    pub(crate) fn mark_gallery_as_snikt_gallery(
-        &self,
-        gallery_id: i64,
-        snikt_gallery_id: &str,
-    ) -> Result<GallerySummary> {
-        let snikt_gallery_id =
-            validate_external_text_id(Some(snikt_gallery_id), "SNIKT.com Gallery ID")?
-                .ok_or_else(|| AppError::Message("SNIKT.com Gallery ID is required".to_string()))?;
-        let now = Utc::now().to_rfc3339();
-        {
-            let conn = self.lock()?;
-            conn.execute(
-                "UPDATE gallery SET snikt_gallery_id = ?1, snikt_gallery_inherits_collection = 0, updated_at = ?2 WHERE id = ?3",
-                params![snikt_gallery_id, now, gallery_id],
-            )?;
-        }
-        self.rewrite_gallery_manifest(gallery_id)?;
-        self.gallery_summary(gallery_id)
-    }
-
-    pub(crate) fn mark_gallery_as_raremarq_gallery(
-        &self,
-        gallery_id: i64,
-        raremarq_gallery_id: &str,
-    ) -> Result<GallerySummary> {
-        let raremarq_gallery_id =
-            normalize_raremarq_gallery_id(Some(raremarq_gallery_id), "Raremarq Gallery ID")?
-                .ok_or_else(|| AppError::Message("Raremarq Gallery ID is required".to_string()))?;
-        let now = Utc::now().to_rfc3339();
-        {
-            let conn = self.lock()?;
-            conn.execute(
-                "UPDATE gallery SET raremarq_gallery_id = ?1, updated_at = ?2 WHERE id = ?3",
-                params![raremarq_gallery_id, now, gallery_id],
             )?;
         }
         self.rewrite_gallery_manifest(gallery_id)?;
@@ -3617,10 +3438,11 @@ impl Catalog {
     fn artwork_count_for_collection(&self, collection_id: i64) -> Result<usize> {
         let conn = self.lock()?;
         conn.query_row(
-            "SELECT COUNT(DISTINCT ga.artwork_id)
-             FROM collection_gallery cg
-             JOIN gallery_artwork ga ON ga.gallery_id = cg.gallery_id
-             WHERE cg.collection_id = ?1",
+            "SELECT COUNT(*) FROM (
+               SELECT artwork_id FROM collection_artwork WHERE collection_id=?1
+               UNION SELECT ga.artwork_id FROM gallery_artwork ga
+               JOIN collection_gallery cg ON cg.gallery_id=ga.gallery_id WHERE cg.collection_id=?1
+             )",
             params![collection_id],
             |row| row.get(0),
         )
@@ -3836,9 +3658,7 @@ impl Catalog {
             r#"
             SELECT DISTINCT fa.artwork_id, fa.id, fa.current_path
             FROM file_asset fa
-            JOIN gallery_artwork ga ON ga.artwork_id = fa.artwork_id
-            JOIN collection_gallery cg ON cg.gallery_id = ga.gallery_id
-            WHERE cg.collection_id = ?1
+            WHERE fa.artwork_id IN (SELECT artwork_id FROM collection_artwork WHERE collection_id=?1 UNION SELECT ga.artwork_id FROM gallery_artwork ga JOIN collection_gallery cg ON cg.gallery_id=ga.gallery_id WHERE cg.collection_id=?1)
             ORDER BY fa.artwork_id, fa.is_primary DESC, fa.display_order, fa.id
             "#,
         )?;
@@ -3870,9 +3690,7 @@ impl Catalog {
             r#"
             SELECT DISTINCT fa.artwork_id, fa.id, fa.current_path
             FROM file_asset fa
-            JOIN gallery_artwork ga ON ga.artwork_id = fa.artwork_id
-            JOIN collection_gallery cg ON cg.gallery_id = ga.gallery_id
-            WHERE cg.collection_id = ?1
+            WHERE fa.artwork_id IN (SELECT artwork_id FROM collection_artwork WHERE collection_id=?1 UNION SELECT ga.artwork_id FROM gallery_artwork ga JOIN collection_gallery cg ON cg.gallery_id=ga.gallery_id WHERE cg.collection_id=?1)
               AND NOT EXISTS (
                 SELECT 1
                 FROM derived_asset da
@@ -3913,9 +3731,7 @@ impl Catalog {
             &conn,
             "SELECT DISTINCT a.id
              FROM artwork a
-             JOIN gallery_artwork ga ON ga.artwork_id = a.id
-             JOIN collection_gallery cg ON cg.gallery_id = ga.gallery_id
-             WHERE cg.collection_id = ?1
+             WHERE a.id IN (SELECT artwork_id FROM collection_artwork WHERE collection_id=?1 UNION SELECT ga.artwork_id FROM gallery_artwork ga JOIN collection_gallery cg ON cg.gallery_id=ga.gallery_id WHERE cg.collection_id=?1)
              ORDER BY a.canonical_id",
             collection_id,
         )?;
@@ -3935,9 +3751,7 @@ impl Catalog {
         let conn = self.lock()?;
         let ids = matching_artwork_ids_for_scope(
             &conn,
-            "JOIN gallery_artwork ga ON ga.artwork_id = a.id
-             JOIN collection_gallery cg ON cg.gallery_id = ga.gallery_id
-             WHERE cg.collection_id = ?1",
+            "LEFT JOIN gallery_artwork ga ON ga.artwork_id=a.id WHERE a.id IN (SELECT artwork_id FROM collection_artwork WHERE collection_id=?1 UNION SELECT ga.artwork_id FROM gallery_artwork ga JOIN collection_gallery cg ON cg.gallery_id=ga.gallery_id WHERE cg.collection_id=?1)",
             "searched.canonical_id",
             collection_id,
             terms,
@@ -4175,15 +3989,6 @@ impl Catalog {
             .collect()
     }
 
-    pub(crate) fn artwork_id_for_external_id(
-        &self,
-        provider: &str,
-        external_id: &str,
-    ) -> Result<Option<i64>> {
-        let conn = self.lock()?;
-        artwork_id_for_external_id_locked(&conn, provider, external_id)
-    }
-
     fn collection_gallery_count(&self, collection_id: i64) -> Result<i64> {
         let conn = self.lock()?;
         conn.query_row(
@@ -4215,17 +4020,20 @@ impl Catalog {
     ) -> Result<(PathBuf, CollectionManifest)> {
         let collection = self.collection_summary(collection_id)?;
         let galleries = self.galleries_for_collection(collection_id)?;
-        let mut artwork_by_id = BTreeMap::new();
-        for gallery in &galleries {
-            for artwork in self.artworks_for_gallery(gallery.id)? {
-                artwork_by_id.entry(artwork.id).or_insert(artwork);
-            }
-        }
+        let artwork_by_id: BTreeMap<_, _> = self
+            .artworks_for_collection(collection_id)?
+            .into_iter()
+            .map(|a| (a.id, a))
+            .collect();
         let manifest = CollectionManifest {
             schema_version: SCHEMA_VERSION.to_string(),
             id: collection.stable_id.clone(),
             name: collection.name.clone(),
-            external_links: collection_external_links(&collection),
+            external_links: self.retained_oaa_links(
+                "collection",
+                collection_id,
+                collection_external_links(&collection),
+            )?,
             galleries: galleries
                 .into_iter()
                 .map(|gallery| ManifestReference {
@@ -4266,7 +4074,11 @@ impl Catalog {
             schema_version: SCHEMA_VERSION.to_string(),
             id: gallery.stable_id.clone(),
             name: gallery.name.clone(),
-            external_links: gallery_external_links(&gallery),
+            external_links: self.retained_oaa_links(
+                "gallery",
+                gallery_id,
+                gallery_external_links(&gallery),
+            )?,
             artworks: artworks
                 .into_iter()
                 .map(|artwork| ArtworkManifestReference {
@@ -4495,25 +4307,6 @@ impl Catalog {
             params![path_string],
             |row| row.get(0),
         )?)
-    }
-
-    pub(crate) fn upsert_artwork_external_link(
-        &self,
-        artwork_id: i64,
-        provider: &str,
-        external_id: Option<&str>,
-        url: &str,
-        extensions: Option<&serde_json::Value>,
-    ) -> Result<()> {
-        let conn = self.lock()?;
-        upsert_external_link_locked_with_extensions(
-            &conn,
-            artwork_id,
-            provider,
-            external_id,
-            url,
-            extensions,
-        )
     }
 
     pub(crate) fn artwork_external_links(
@@ -5825,64 +5618,43 @@ impl Catalog {
                 normalize_optional(update.personal_notes.as_deref())
             ],
         )?;
+        let updated_snikt = update
+            .snikt_metadata
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
         if let Some(snikt_metadata) = update.snikt_metadata {
-            conn.execute(
-                "INSERT INTO snikt_metadata
-                   (artwork_id, art_type, comic_publisher, series_title, issue_number,
-                    series_page_number, year, character, subcategory, animation_studio,
-                    episode_number, episode_title, published_date, strip_title,
-                    is_sunday_strip, other, tags, is_nsfw, is_for_sale, price,
-                    is_open_to_offers)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                         ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
-                 ON CONFLICT(artwork_id) DO UPDATE SET
-                   art_type = excluded.art_type,
-                   comic_publisher = excluded.comic_publisher,
-                   series_title = excluded.series_title,
-                   issue_number = excluded.issue_number,
-                   series_page_number = excluded.series_page_number,
-                   year = excluded.year,
-                   character = excluded.character,
-                   subcategory = excluded.subcategory,
-                   animation_studio = excluded.animation_studio,
-                   episode_number = excluded.episode_number,
-                   episode_title = excluded.episode_title,
-                   published_date = excluded.published_date,
-                   strip_title = excluded.strip_title,
-                   is_sunday_strip = excluded.is_sunday_strip,
-                   other = excluded.other,
-                   tags = excluded.tags,
-                   is_nsfw = excluded.is_nsfw,
-                   is_for_sale = excluded.is_for_sale,
-                   price = excluded.price,
-                   is_open_to_offers = excluded.is_open_to_offers",
-                params![
-                    update.artwork_id,
-                    normalize_optional(snikt_metadata.art_type.as_deref()),
-                    normalize_optional(snikt_metadata.comic_publisher.as_deref()),
-                    normalize_optional(snikt_metadata.series_title.as_deref()),
-                    normalize_optional(snikt_metadata.issue_number.as_deref()),
-                    normalize_optional(snikt_metadata.series_page_number.as_deref()),
-                    normalize_optional(snikt_metadata.year.as_deref()),
-                    normalize_optional(snikt_metadata.character.as_deref()),
-                    normalize_optional(snikt_metadata.subcategory.as_deref()),
-                    normalize_optional(snikt_metadata.animation_studio.as_deref()),
-                    normalize_optional(snikt_metadata.episode_number.as_deref()),
-                    normalize_optional(snikt_metadata.episode_title.as_deref()),
-                    normalize_optional(snikt_metadata.published_date.as_deref()),
-                    normalize_optional(snikt_metadata.strip_title.as_deref()),
-                    snikt_metadata.is_sunday_strip as i64,
-                    normalize_optional(snikt_metadata.other.as_deref()),
-                    normalize_optional(snikt_metadata.tags.as_deref()),
-                    snikt_metadata.is_nsfw as i64,
-                    snikt_metadata.is_for_sale as i64,
-                    normalize_optional(snikt_metadata.price.as_deref()),
-                    snikt_metadata.is_open_to_offers as i64
-                ],
-            )?;
+            save_snikt_metadata_locked(&conn, update.artwork_id, &snikt_metadata)?;
         }
         let artwork_id = update.artwork_id;
         drop(conn);
+        // Keep retained provider data in sync with explicit local edits, including cleared values.
+        if let Some(serde_json::Value::Object(updated)) = updated_snikt {
+            for (provider, mut block) in
+                self.oaa_extension_blocks("artwork_public_metadata", artwork_id)?
+            {
+                if provider == "com.snikt" {
+                    if let Some(object) = block.as_object_mut() {
+                        let metadata = object
+                            .entry("metadata")
+                            .or_insert_with(|| serde_json::json!({}));
+                        if !metadata.is_object() {
+                            *metadata = serde_json::json!({});
+                        }
+                        metadata
+                            .as_object_mut()
+                            .expect("object")
+                            .extend(updated.clone());
+                        self.save_oaa_extension_block(
+                            "artwork_public_metadata",
+                            artwork_id,
+                            &provider,
+                            &block,
+                        )?;
+                    }
+                }
+            }
+        }
         if rewrite_artwork_manifest && self.artwork_manifest_path(artwork_id)?.is_some() {
             self.ensure_artwork_manifest(artwork_id)?;
         }
@@ -6361,6 +6133,7 @@ fn artwork_manifest_from_detail(detail: &ArtworkDetail, asset_folder: &Path) -> 
                         );
                     }
                     ArtworkArtistCredit {
+                        display_name: Some(credit.name.clone()),
                         first_name: credit.first_name.clone(),
                         last_name: credit.last_name.clone(),
                         role: credit.role.clone(),
@@ -6887,13 +6660,6 @@ fn env_flag(name: &str) -> bool {
 
 fn elapsed_ms(started: Instant) -> u128 {
     started.elapsed().as_millis()
-}
-
-fn provider_url(links: &[ExternalLinkManifest], provider: &str) -> Option<String> {
-    links
-        .iter()
-        .find(|link| link.provider == provider)
-        .map(|link| link.url.clone())
 }
 
 fn app_extension_string(
@@ -8540,8 +8306,9 @@ fn upsert_external_link_locked_with_extensions(
     extensions: Option<&serde_json::Value>,
 ) -> Result<()> {
     if let Some(external_id) = external_id {
+        let already_associated: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM external_link WHERE artwork_id=?1 AND link_type=?2 AND external_id=?3)", params![artwork_id,provider,external_id], |row|row.get(0))?;
         let conflict_id = artwork_id_for_external_id_locked(conn, provider, external_id)?;
-        if conflict_id.is_some_and(|id| id != artwork_id) {
+        if !already_associated && conflict_id.is_some_and(|id| id != artwork_id) {
             return Err(AppError::Message(format!(
                 "{provider} artwork ID already exists in this catalog: {external_id}"
             )));
@@ -8698,4 +8465,67 @@ fn sql_placeholders(count: usize) -> String {
     std::iter::repeat_n("?", count)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn save_snikt_metadata_locked(
+    conn: &Connection,
+    artwork_id: i64,
+    snikt_metadata: &SniktMetadataUpdate,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO snikt_metadata
+                   (artwork_id, art_type, comic_publisher, series_title, issue_number,
+                    series_page_number, year, character, subcategory, animation_studio,
+                    episode_number, episode_title, published_date, strip_title,
+                    is_sunday_strip, other, tags, is_nsfw, is_for_sale, price,
+                    is_open_to_offers)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                         ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+                 ON CONFLICT(artwork_id) DO UPDATE SET
+                   art_type = excluded.art_type,
+                   comic_publisher = excluded.comic_publisher,
+                   series_title = excluded.series_title,
+                   issue_number = excluded.issue_number,
+                   series_page_number = excluded.series_page_number,
+                   year = excluded.year,
+                   character = excluded.character,
+                   subcategory = excluded.subcategory,
+                   animation_studio = excluded.animation_studio,
+                   episode_number = excluded.episode_number,
+                   episode_title = excluded.episode_title,
+                   published_date = excluded.published_date,
+                   strip_title = excluded.strip_title,
+                   is_sunday_strip = excluded.is_sunday_strip,
+                   other = excluded.other,
+                   tags = excluded.tags,
+                   is_nsfw = excluded.is_nsfw,
+                   is_for_sale = excluded.is_for_sale,
+                   price = excluded.price,
+                   is_open_to_offers = excluded.is_open_to_offers",
+        params![
+            artwork_id,
+            normalize_optional(snikt_metadata.art_type.as_deref()),
+            normalize_optional(snikt_metadata.comic_publisher.as_deref()),
+            normalize_optional(snikt_metadata.series_title.as_deref()),
+            normalize_optional(snikt_metadata.issue_number.as_deref()),
+            normalize_optional(snikt_metadata.series_page_number.as_deref()),
+            normalize_optional(snikt_metadata.year.as_deref()),
+            normalize_optional(snikt_metadata.character.as_deref()),
+            normalize_optional(snikt_metadata.subcategory.as_deref()),
+            normalize_optional(snikt_metadata.animation_studio.as_deref()),
+            normalize_optional(snikt_metadata.episode_number.as_deref()),
+            normalize_optional(snikt_metadata.episode_title.as_deref()),
+            normalize_optional(snikt_metadata.published_date.as_deref()),
+            normalize_optional(snikt_metadata.strip_title.as_deref()),
+            snikt_metadata.is_sunday_strip as i64,
+            normalize_optional(snikt_metadata.other.as_deref()),
+            normalize_optional(snikt_metadata.tags.as_deref()),
+            snikt_metadata.is_nsfw as i64,
+            snikt_metadata.is_for_sale as i64,
+            normalize_optional(snikt_metadata.price.as_deref()),
+            snikt_metadata.is_open_to_offers as i64
+        ],
+    )?;
+
+    Ok(())
 }

@@ -36,7 +36,7 @@ For Raremarq CSV export, see [Exporting To Raremarq](exporting-raremarq.md).
 
 Use **File > Export OAA Archive** to write an `.oaa` archive for the open Collection.
 
-The export wizard lets you include or omit artwork files and private collector metadata. When files are included, linked files are resolved into OAA-local embedded files in the exported archive without changing the open Collection on disk. When files are omitted, the archive still carries Collection, Gallery, Artwork, non-private metadata, and external-site extension data.
+The export wizard lets you include or omit artwork files and private collector metadata. When files are included, linked files are resolved into OAA-local embedded files in the exported archive without changing the open Collection on disk. When files are omitted, the archive still carries Collection, Gallery, Artwork, and external links. Private collector metadata is off by default; this also excludes extension data and supporting attachments. See [Exporting OAA](exporting-oaa.md) for the privacy choices and preservation limits.
 
 Leave **Include private collector metadata** enabled for a private backup. Turn it off before making an archive for public sharing.
 

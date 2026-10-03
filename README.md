@@ -19,7 +19,7 @@ OA Curator is source-available freeware, not open source. You may view, build, i
 - Attach generic supporting files such as PDF, PSD, HEIC, AVIF, WebP, ZIP, or documents without treating them as renderable images.
 - Generate cached thumbnails and previews without modifying original files.
 - Import ComicArtFans and SNIKT.com CSV metadata.
-- Import and export OAA archives for portable collector-owned data.
+- Import OAA 1.0 and legacy 0.1 archives, and export OAA 1.0 archives for portable collector-owned data.
 - Edit public metadata, gallery-site URLs, artist credits, and private collector fields.
 - Generate Basic and Premium PNG derivatives for web workflows.
 - Export Raremarq bulk-upload CSV files.
@@ -59,7 +59,7 @@ Raremarq support is centered on bulk-upload CSV export. OA Curator can write a l
 
 <img align="right" src="docs/user/assets/oaa-logo.svg" alt="Original Art Archive logo" width="96">
 
-OAA is the portable archive path for collector-owned data. OAA import/export can carry OA Curator metadata, gallery-site links, and optionally artwork files.
+OAA is the portable archive path for collector-owned data. OAA import/export can carry OA Curator metadata, gallery-site links, and optionally artwork files. See the [OAA 1.0 conformance notes](docs/oaa-1.0-conformance.md) for supported behavior, privacy choices, and preservation limits.
 
 The OAA logo is used only to truthfully describe OA Curator's compatibility with the Original Art Archive Format. It does not imply separate certification, endorsement, or maintenance by the OAA project.
 
@@ -79,16 +79,10 @@ npm install
 python -m pip install -r requirements-docs.txt
 ```
 
-Fast local verification:
+Verify this source checkout:
 
 ```powershell
-npm run check:fast
-```
-
-Full verification:
-
-```powershell
-npm run check:full
+npm run check:release
 ```
 
 Run the desktop app in development:

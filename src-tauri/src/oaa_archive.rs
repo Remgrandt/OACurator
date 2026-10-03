@@ -1,7 +1,6 @@
 use crate::catalog::{
-    art_type_id_for_label, artist_role_id_for_label, media_type_id_for_label, ArtistCreditUpdate,
     ArtworkDetail, ArtworkSummary, AssetKind, Catalog, CollectionSummary, DerivedAssetInsert,
-    FileAsset, FileAssetKnownMetadataInsert, FileAssetMetadata, GallerySummary, MetadataUpdate,
+    FileAsset, FileAssetKnownMetadataInsert, FileAssetMetadata, GallerySummary,
 };
 use crate::export_policy::ExportPolicy;
 use crate::oaa_validation::ensure_oaa_archive_valid;
@@ -18,7 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-const OAA_SCHEMA_VERSION: &str = "0.1";
+use crate::oaa_validation::OAA_SCHEMA_VERSION;
+use unicode_normalization::UnicodeNormalization;
 
 #[derive(Debug, Clone)]
 pub struct OaaImportOptions {
@@ -101,6 +101,7 @@ struct OaaCollectionManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OaaCollectionGalleryRef {
     id: String,
+    #[serde(default)]
     name: String,
     path: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -182,6 +183,8 @@ struct OaaPublicMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct OaaArtistCredit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     first_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_name: Option<String>,
@@ -215,10 +218,13 @@ struct OaaFileObject {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     file_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::manifest::optional_integer")]
     size_bytes: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::manifest::optional_integer")]
     width: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::manifest::optional_integer")]
     height: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dpi_x: Option<f64>,
@@ -298,38 +304,17 @@ where
         );
     }
 
-    let (collection, collection_folder) = if let Some(collection_id) = options.target_collection_id
-    {
-        let collection = catalog.collection_summary(collection_id)?;
-        let collection_folder = collection
-            .manifest_path
-            .parent()
-            .ok_or_else(|| {
-                AppError::Message(format!(
-                    "Collection manifest has no parent folder: {}",
-                    collection.manifest_path.display()
-                ))
-            })?
-            .to_path_buf();
-        (collection, collection_folder)
-    } else {
-        let destination_root = options.destination_root.as_ref().ok_or_else(|| {
-            AppError::Message(
-                "Destination folder is required when importing a new Collection".to_string(),
-            )
-        })?;
-        fs::create_dir_all(destination_root)?;
-        let collection_folder = unique_child_folder(destination_root, &collection_manifest.name)?;
-        let collection_path = collection_folder.join(".oacollection");
-        let collection = catalog.create_collection_with_provider_ids(
-            &collection_manifest.name,
-            &collection_path,
-            provider_id(&collection_manifest.external_links, "com.comicartfans").as_deref(),
-            provider_id(&collection_manifest.external_links, "com.snikt").as_deref(),
-            provider_id(&collection_manifest.external_links, "com.raremarq").as_deref(),
-        )?;
-        (collection, collection_folder)
-    };
+    let collection = catalog.collection_summary(
+        options
+            .target_collection_id
+            .expect("existing collection import"),
+    )?;
+    let collection_folder = collection
+        .manifest_path
+        .parent()
+        .ok_or_else(|| AppError::Message("Collection manifest has no parent folder".into()))?
+        .to_path_buf();
+    reject_filesystem_redirections(&collection_folder)?;
     let batch_transaction = catalog.begin_batch_transaction()?;
     save_extension_blocks(
         catalog,
@@ -338,6 +323,13 @@ where
         &collection_manifest.extensions,
     )?;
 
+    catalog.save_oaa_links(
+        "collection",
+        collection.id,
+        &serde_json::from_value::<Vec<crate::manifest::ExternalLinkManifest>>(
+            serde_json::to_value(&collection_manifest.external_links)?,
+        )?,
+    )?;
     let mut gallery_manifests = Vec::new();
     let mut gallery_id_by_oaa_id = HashMap::new();
     for reference in &collection_manifest.galleries {
@@ -356,19 +348,15 @@ where
         let gallery_folder =
             unique_child_folder(&collection_folder.join("galleries"), &gallery_manifest.name)?;
         let gallery_path = gallery_folder.join(".oagallery");
-        let gallery = catalog.create_gallery_with_caf_gallery_room_id(
-            &gallery_manifest.name,
-            &gallery_path,
-            provider_id(&gallery_manifest.external_links, "com.comicartfans").as_deref(),
-        )?;
-        if let Some(snikt_id) = provider_id(&gallery_manifest.external_links, "com.snikt") {
-            catalog.mark_gallery_as_snikt_gallery(gallery.id, &snikt_id)?;
-        }
-        if let Some(raremarq_id) = provider_id(&gallery_manifest.external_links, "com.raremarq") {
-            catalog.mark_gallery_as_raremarq_gallery(gallery.id, &raremarq_id)?;
-        }
+        let gallery = catalog.create_gallery(&gallery_manifest.name, &gallery_path)?;
         catalog.link_gallery_to_collection(collection.id, gallery.id)?;
         save_extension_blocks(catalog, "gallery", gallery.id, &gallery_manifest.extensions)?;
+        catalog.import_oaa_gallery_links(
+            gallery.id,
+            &serde_json::from_value::<Vec<crate::manifest::ExternalLinkManifest>>(
+                serde_json::to_value(&gallery_manifest.external_links)?,
+            )?,
+        )?;
         gallery_id_by_oaa_id.insert(gallery_manifest.id.clone(), gallery.id);
         gallery_manifests.push(gallery_manifest);
         progress(OaaImportProgress {
@@ -403,21 +391,7 @@ where
         }
     }
 
-    let fallback_gallery =
-        if let Some(gallery) = catalog.galleries_for_collection(collection.id)?.first() {
-            gallery.clone()
-        } else {
-            let gallery_path = collection_folder
-                .join("galleries")
-                .join("Imported Artwork")
-                .join(".oagallery");
-            let gallery = catalog.create_gallery("Imported Artwork", &gallery_path)?;
-            catalog.link_gallery_to_collection(collection.id, gallery.id)?;
-            gallery
-        };
-
     let mut files_imported = 0usize;
-    let mut source_file_ids_by_oaa_file_id: HashMap<String, i64> = HashMap::new();
     let mut artworks_imported = 0usize;
     for reference in &collection_manifest.artworks {
         validate_archive_path(&reference.path, "collection artwork reference path")?;
@@ -436,30 +410,15 @@ where
         let member_galleries = gallery_membership_by_artwork
             .get(&artwork_manifest.id)
             .cloned()
-            .filter(|galleries| !galleries.is_empty())
-            .unwrap_or_else(|| vec![fallback_gallery.id]);
-        let artwork_id = if let Some(existing_artwork_id) =
-            existing_artwork_id_for_oaa_external_links(catalog, &artwork_manifest.external_links)?
-        {
-            for gallery_id in &member_galleries {
-                catalog.link_artwork_to_gallery(*gallery_id, existing_artwork_id)?;
-            }
-            existing_artwork_id
-        } else {
-            let primary_gallery_id = member_galleries[0];
-            let artwork = catalog.create_artwork_in_gallery(
-                primary_gallery_id,
-                &artwork_manifest.title,
-                None,
-            )?;
-            for gallery_id in member_galleries.iter().skip(1) {
-                catalog.link_artwork_to_gallery(*gallery_id, artwork.id)?;
-            }
-            artwork.id
-        };
-
+            .unwrap_or_default();
+        let artwork_id = catalog
+            .create_oaa_artwork(collection.id, &artwork_manifest.title)?
+            .id;
+        for gallery_id in &member_galleries {
+            catalog.link_artwork_to_gallery(*gallery_id, artwork_id)?;
+        }
+        let mut source_file_ids_by_oaa_file_id: HashMap<String, i64> = HashMap::new();
         save_artwork_metadata(catalog, artwork_id, &artwork_manifest)?;
-        save_external_links(catalog, artwork_id, &artwork_manifest.external_links)?;
         save_extension_blocks(catalog, "artwork", artwork_id, &artwork_manifest.extensions)?;
         if let Some(public_metadata) = artwork_manifest.public_metadata.as_ref() {
             save_extension_blocks(
@@ -480,6 +439,7 @@ where
 
         let artwork_archive_dir = parent_archive_dir(&reference.path)?;
         let artwork_folder = catalog.artwork_asset_folder(artwork_id)?;
+        reject_filesystem_redirections(&artwork_folder)?;
         fs::create_dir_all(&artwork_folder)?;
         for file in &artwork_manifest.files {
             validate_archive_path(&file.relative_path, "artwork file relative path")?;
@@ -527,6 +487,11 @@ where
                     },
                 )?;
                 save_extension_blocks(catalog, "derived_asset", derivative.id, &file.extensions)?;
+                catalog.save_oaa_file(
+                    "derived_asset",
+                    derivative.id,
+                    &serde_json::from_value(serde_json::to_value(file)?)?,
+                )?;
             } else {
                 let image_role = manifest_image_role(file.image_role.as_deref(), &file.extensions);
                 let file_asset_id = catalog.upsert_file_asset_with_known_metadata(
@@ -565,6 +530,11 @@ where
                     )?;
                 }
                 save_extension_blocks(catalog, "file_asset", file_asset_id, &file.extensions)?;
+                catalog.save_oaa_file(
+                    "file_asset",
+                    file_asset_id,
+                    &serde_json::from_value(serde_json::to_value(file)?)?,
+                )?;
                 source_file_ids_by_oaa_file_id.insert(file.id.clone(), file_asset_id);
             }
             files_imported += 1;
@@ -588,6 +558,7 @@ where
         });
     }
 
+    catalog.finish_oaa_import(collection.id)?;
     batch_transaction.commit()?;
     progress(OaaImportProgress {
         phase: "complete".to_string(),
@@ -611,7 +582,7 @@ where
         galleries_imported: collection_manifest.galleries.len(),
         artworks_imported: collection_manifest.artworks.len(),
         files_imported,
-        messages: Vec::new(),
+        messages: vec!["Imported as separate artwork records. Unknown optional fields and reference/credit extensions may not survive later edits; keep the source archive.".into()],
     })
 }
 
@@ -630,9 +601,11 @@ where
             "Destination folder is required when importing a new Collection".to_string(),
         )
     })?;
+    reject_filesystem_redirections(destination_root)?;
     fs::create_dir_all(destination_root)?;
 
     let validation = validate_oaa_manifest_tree(zip, collection_manifest, progress)?;
+    validate_extraction_paths(destination_root, &validation.allowed_entries)?;
     let collection_folder = unique_child_folder(destination_root, &collection_manifest.name)?;
     let archive_entries_total = validation.allowed_entries.len();
     progress(OaaImportProgress {
@@ -693,7 +666,7 @@ where
         done: true,
     });
 
-    let mut messages = Vec::new();
+    let mut messages = vec!["Unknown optional fields and reference/credit extensions may not survive later edits; keep the source archive.".into()];
     if extraction.skipped_entries > 0 {
         let label = if extraction.skipped_entries == 1 {
             "entry"
@@ -845,11 +818,26 @@ where
         let destination = collection_folder.join(PathBuf::from(
             name.replace('/', std::path::MAIN_SEPARATOR_STR),
         ));
+        reject_filesystem_redirections(&destination)?;
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut output = fs::File::create(&destination)?;
-        std::io::copy(&mut source, &mut output)?;
+        reject_filesystem_redirections(&destination)?;
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)?;
+        let copied = std::io::copy(
+            &mut source
+                .by_ref()
+                .take(crate::oaa_validation::OaaValidationLimits::default().max_entry_size + 1),
+            &mut output,
+        )?;
+        if copied > crate::oaa_validation::OaaValidationLimits::default().max_entry_size {
+            return Err(AppError::Message(
+                "OAA capacity_exceeded while extracting".into(),
+            ));
+        }
         extracted += 1;
         progress(OaaImportProgress {
             phase: "extract".to_string(),
@@ -947,12 +935,22 @@ where
         schema_version: OAA_SCHEMA_VERSION.to_string(),
         id: snapshot.collection.stable_id.clone(),
         name: snapshot.collection.name.clone(),
-        external_links: collection_external_links(&snapshot.collection),
+        external_links: retained_external_links(
+            catalog,
+            "collection",
+            snapshot.collection.id,
+            collection_external_links(&snapshot.collection),
+        )?,
         galleries: gallery_refs,
         artworks: artwork_refs,
         extensions: extension_blocks_map(catalog, "collection", snapshot.collection.id)?,
     };
-    write_zip_json(&mut zip, ".oacollection", &collection_manifest, deflated)?;
+    write_zip_json(
+        &mut zip,
+        ".oacollection",
+        &export_value(&collection_manifest, policy.include_private_metadata)?,
+        deflated,
+    )?;
     current_step += 1;
     progress(OaaExportProgress {
         phase: "collection".to_string(),
@@ -971,10 +969,15 @@ where
             schema_version: OAA_SCHEMA_VERSION.to_string(),
             id: gallery.stable_id.clone(),
             name: gallery.name.clone(),
-            external_links: gallery_external_links(
-                gallery,
-                snapshot.collection.raremarq_collection_id.as_deref(),
-            ),
+            external_links: retained_external_links(
+                catalog,
+                "gallery",
+                gallery.id,
+                gallery_external_links(
+                    gallery,
+                    snapshot.collection.raremarq_collection_id.as_deref(),
+                ),
+            )?,
             artworks: artworks
                 .iter()
                 .map(|artwork| OaaGalleryArtworkRef {
@@ -987,7 +990,7 @@ where
         write_zip_json(
             &mut zip,
             &gallery_manifest_archive_path(gallery),
-            &gallery_manifest,
+            &export_value(&gallery_manifest, policy.include_private_metadata)?,
             deflated,
         )?;
         current_step += 1;
@@ -1007,6 +1010,21 @@ where
 
         if options.include_images {
             for file_asset in &detail.file_assets {
+                if !policy.include_private_metadata
+                    && !matches!(
+                        file_asset.extension.to_ascii_lowercase().as_str(),
+                        "jpg" | "jpeg" | "png" | "tif" | "tiff"
+                    )
+                {
+                    continue;
+                }
+                if !policy.include_private_metadata
+                    && file_object_for_file_asset(catalog, file_asset, &file_asset.file_name)?
+                        .file_kind
+                        == "supporting"
+                {
+                    continue;
+                }
                 let relative_path = unique_archive_file_name(
                     &mut emitted_paths,
                     &artwork_dir,
@@ -1027,6 +1045,20 @@ where
             }
 
             for derived_asset in &detail.derived_assets {
+                if !policy.include_private_metadata
+                    && !matches!(
+                        derived_asset
+                            .path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_ascii_lowercase()
+                            .as_str(),
+                        "jpg" | "jpeg" | "png" | "tif" | "tiff"
+                    )
+                {
+                    continue;
+                }
                 if derived_asset.derivative_type == "thumbnail"
                     || derived_asset.derivative_type == "preview"
                 {
@@ -1071,7 +1103,7 @@ where
         write_zip_json(
             &mut zip,
             &artwork_manifest_archive_path(&detail.canonical_id),
-            &artwork_manifest,
+            &export_value(&artwork_manifest, policy.include_private_metadata)?,
             deflated,
         )?;
         current_step += 1;
@@ -1086,6 +1118,7 @@ where
     let output = zip.finish()?;
     output.sync_all()?;
     drop(output);
+    ensure_oaa_archive_valid(&temporary_archive_path)?;
     place_archive_output(
         &temporary_archive_path,
         &final_archive_path,
@@ -1109,7 +1142,11 @@ where
 fn oaa_export_snapshot(catalog: &Catalog, collection_id: i64) -> Result<OaaExportSnapshot> {
     let collection = catalog.collection_summary(collection_id)?;
     let galleries = catalog.galleries_for_collection(collection.id)?;
-    let mut artwork_by_id = BTreeMap::new();
+    let mut artwork_by_id: BTreeMap<_, _> = catalog
+        .artworks_for_collection(collection.id)?
+        .into_iter()
+        .map(|a| (a.id, a))
+        .collect();
     let mut gallery_artworks = HashMap::new();
     for gallery in &galleries {
         let artworks = catalog.artworks_for_gallery(gallery.id)?;
@@ -1232,160 +1269,10 @@ fn save_artwork_metadata(
     artwork_id: i64,
     manifest: &OaaArtworkManifest,
 ) -> Result<()> {
-    let public = manifest.public_metadata.clone().unwrap_or_default();
-    let private = manifest.private_metadata.clone().unwrap_or_default();
-    let caf_extension = public.extensions.get("com.comicartfans");
-    let caf_csv_image_link = caf_extension
-        .and_then(|extension| extension.get("csv_image_link"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let caf_csv_added_to_caf = caf_extension
-        .and_then(|extension| extension.get("csv_added_to_caf"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let snikt_csv_created_date = public
-        .extensions
-        .get("com.snikt")
-        .and_then(|extension| extension.get("metadata"))
-        .and_then(|metadata| metadata.get("csv_created_date"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let publication_status_id = caf_extension
-        .and_then(|extension| extension.get("publication_status_id"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| match public.publication_status.as_deref() {
-            Some("published_art") => Some("1".to_string()),
-            Some("unpublished_art") => Some("2".to_string()),
-            _ => None,
-        });
-    let update = MetadataUpdate {
+    catalog.import_oaa_artwork_metadata(
         artwork_id,
-        title: manifest.title.clone(),
-        description: public.description,
-        for_sale_status: public.for_sale_status,
-        media_type_id: caf_extension
-            .and_then(|extension| extension.get("media_type_id"))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| {
-                public
-                    .media
-                    .as_deref()
-                    .and_then(media_type_id_for_label)
-                    .map(str::to_string)
-            }),
-        art_type_id: caf_extension
-            .and_then(|extension| extension.get("art_type_id"))
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .or_else(|| {
-                public
-                    .artwork_type
-                    .as_deref()
-                    .and_then(art_type_id_for_label)
-                    .map(str::to_string)
-            }),
-        publication_status_id,
-        active: public.is_public.unwrap_or(true),
-        illustration_exchange: caf_extension
-            .and_then(|extension| extension.get("illustration_exchange"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        ix_for_sale: caf_extension
-            .and_then(|extension| extension.get("ix_for_sale"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        artist_credits: public
-            .artist_credits
-            .iter()
-            .map(|credit| {
-                let role_id = credit
-                    .role
-                    .as_deref()
-                    .and_then(artist_role_id_for_label)
-                    .map(str::to_string);
-                ArtistCreditUpdate {
-                    first_name: credit.first_name.clone(),
-                    last_name: credit.last_name.clone(),
-                    role_id,
-                }
-            })
-            .collect(),
-        media: public.media,
-        format: public.artwork_type,
-        caf_url: provider_url(&manifest.external_links, "com.comicartfans"),
-        snikt_url: provider_url(&manifest.external_links, "com.snikt"),
-        raremarq_url: provider_url(&manifest.external_links, "com.raremarq"),
-        generic_url: app_extension_string(&manifest.extensions, "generic_url"),
-        snikt_metadata: public
-            .extensions
-            .get("com.snikt")
-            .and_then(|extension| extension.get("metadata"))
-            .cloned()
-            .map(serde_json::from_value)
-            .transpose()?,
-        purchase_price: private.purchase_price,
-        estimated_value: private.estimated_value,
-        purchase_date: private.purchase_date,
-        provenance: private.provenance,
-        personal_notes: private.personal_notes,
-    };
-    catalog.save_metadata(update)?;
-    catalog.update_caf_csv_tracking(
-        artwork_id,
-        caf_csv_image_link.as_deref(),
-        caf_csv_added_to_caf.as_deref(),
-    )?;
-    catalog.update_snikt_csv_tracking(artwork_id, snikt_csv_created_date.as_deref())
-}
-
-fn save_external_links(
-    catalog: &Catalog,
-    artwork_id: i64,
-    links: &[OaaExternalLink],
-) -> Result<()> {
-    for link in links {
-        let Some(link_type) = oac_artwork_identity_link_type_for_provider(&link.provider) else {
-            continue;
-        };
-        let extensions_value = if link.extensions.is_empty() {
-            None
-        } else {
-            Some(Value::Object(link.extensions.clone().into_iter().collect()))
-        };
-        catalog.upsert_artwork_external_link(
-            artwork_id,
-            link_type,
-            Some(&link.id),
-            &link.url,
-            extensions_value.as_ref(),
-        )?;
-    }
-    Ok(())
-}
-
-fn existing_artwork_id_for_oaa_external_links(
-    catalog: &Catalog,
-    links: &[OaaExternalLink],
-) -> Result<Option<i64>> {
-    let mut matched_artwork_id = None;
-    for link in links {
-        let Some(link_type) = oac_artwork_identity_link_type_for_provider(&link.provider) else {
-            continue;
-        };
-        let Some(artwork_id) = catalog.artwork_id_for_external_id(link_type, &link.id)? else {
-            continue;
-        };
-        if matched_artwork_id.is_some_and(|matched_id| matched_id != artwork_id) {
-            return Err(AppError::Message(format!(
-                "OAA artwork external links resolve to multiple existing Artworks: {}",
-                link.id
-            )));
-        }
-        matched_artwork_id = Some(artwork_id);
-    }
-    Ok(matched_artwork_id)
+        &serde_json::from_value(serde_json::to_value(manifest)?)?,
+    )
 }
 
 fn save_extension_blocks(
@@ -1483,7 +1370,45 @@ fn artwork_external_links(catalog: &Catalog, artwork_id: i64) -> Result<Vec<OaaE
             extensions: object_to_extension_map(link.extensions),
         });
     }
-    Ok(links)
+    retained_external_links(catalog, "artwork", artwork_id, links)
+}
+
+fn export_value(value: &impl Serialize, include_private: bool) -> Result<Value> {
+    fn strip_extensions(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                map.remove("extensions");
+                for child in map.values_mut() {
+                    strip_extensions(child);
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    strip_extensions(child);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut value = serde_json::to_value(value)?;
+    if !include_private {
+        strip_extensions(&mut value);
+    }
+    Ok(value)
+}
+
+fn retained_external_links(
+    catalog: &Catalog,
+    kind: &str,
+    id: i64,
+    links: Vec<OaaExternalLink>,
+) -> Result<Vec<OaaExternalLink>> {
+    let links = catalog.retained_oaa_links(
+        kind,
+        id,
+        serde_json::from_value(serde_json::to_value(links)?)?,
+    )?;
+    Ok(serde_json::from_value(serde_json::to_value(links)?)?)
 }
 
 fn public_metadata_for_detail(
@@ -1493,11 +1418,15 @@ fn public_metadata_for_detail(
     let mut extensions = extension_blocks_map(catalog, "artwork_public_metadata", detail.id)?;
     let caf_extension = caf_public_extension(detail);
     if !caf_extension.is_null() {
-        extensions.insert("com.comicartfans".to_string(), caf_extension);
+        extensions
+            .entry("com.comicartfans".to_string())
+            .or_insert(caf_extension);
     }
     let snikt_extension = snikt_public_extension(detail);
     if !snikt_extension.is_null() {
-        extensions.insert("com.snikt".to_string(), snikt_extension);
+        extensions
+            .entry("com.snikt".to_string())
+            .or_insert(snikt_extension);
     }
     let publication_status = match detail.publication_status_id.as_deref() {
         Some("1") => Some("published_art".to_string()),
@@ -1515,6 +1444,7 @@ fn public_metadata_for_detail(
             .artist_credits
             .iter()
             .map(|credit| OaaArtistCredit {
+                display_name: Some(credit.name.clone()),
                 first_name: credit.first_name.clone(),
                 last_name: credit.last_name.clone(),
                 role: credit.role.clone(),
@@ -1571,6 +1501,17 @@ fn artwork_extension_blocks(
     Ok(extensions)
 }
 
+fn restored_file_object(
+    catalog: &Catalog,
+    kind: &str,
+    id: i64,
+    file: OaaFileObject,
+) -> Result<OaaFileObject> {
+    let mut manifest = serde_json::from_value(serde_json::to_value(file)?)?;
+    catalog.restore_oaa_file(kind, id, &mut manifest)?;
+    Ok(serde_json::from_value(serde_json::to_value(manifest)?)?)
+}
+
 fn file_object_for_file_asset(
     catalog: &Catalog,
     asset: &FileAsset,
@@ -1590,7 +1531,7 @@ fn file_object_for_file_asset(
     extensions.insert("app.oa-curator".to_string(), app_extension);
     let image_role = portable_image_role(asset.image_role.as_deref(), &mut extensions);
 
-    Ok(OaaFileObject {
+    let file = OaaFileObject {
         id: format!("file-{}", asset.id),
         relative_path: relative_path.to_string(),
         file_kind: if asset.width.is_some() && asset.height.is_some() {
@@ -1599,7 +1540,11 @@ fn file_object_for_file_asset(
             "supporting".to_string()
         },
         file_name: Some(asset.file_name.clone()),
-        size_bytes: Some(asset.size_bytes),
+        size_bytes: Some(
+            i64::try_from(fs::metadata(&asset.current_path)?.len()).map_err(|_| {
+                AppError::Message("File size exceeds supported integer capacity".into())
+            })?,
+        ),
         width: asset.width,
         height: asset.height,
         dpi_x: asset.dpi_x,
@@ -1619,7 +1564,8 @@ fn file_object_for_file_asset(
             })
             .collect(),
         extensions,
-    })
+    };
+    restored_file_object(catalog, "file_asset", asset.id, file)
 }
 
 fn file_object_for_derived_asset(
@@ -1645,7 +1591,7 @@ fn file_object_for_derived_asset(
         }
     }
     extensions.insert("app.oa-curator".to_string(), app_extension);
-    Ok(OaaFileObject {
+    let file = OaaFileObject {
         id: format!("derived-{}", asset.id),
         relative_path: relative_path.to_string(),
         file_kind: "derivative".to_string(),
@@ -1667,7 +1613,8 @@ fn file_object_for_derived_asset(
         image_role: portable_image_role(asset.image_role.as_deref(), &mut extensions),
         external_links: Vec::new(),
         extensions,
-    })
+    };
+    restored_file_object(catalog, "derived_asset", asset.id, file)
 }
 
 fn portable_image_role(
@@ -1780,35 +1727,12 @@ fn object_to_extension_map(value: Option<Value>) -> BTreeMap<String, Value> {
     }
 }
 
-fn provider_id(links: &[OaaExternalLink], provider: &str) -> Option<String> {
-    links
-        .iter()
-        .find(|link| link.provider == provider)
-        .map(|link| link.id.clone())
-}
-
-fn provider_url(links: &[OaaExternalLink], provider: &str) -> Option<String> {
-    links
-        .iter()
-        .find(|link| link.provider == provider)
-        .map(|link| link.url.clone())
-}
-
 fn app_extension_string(extensions: &BTreeMap<String, Value>, key: &str) -> Option<String> {
     extensions
         .get("app.oa-curator")
         .and_then(|extension| extension.get(key))
         .and_then(Value::as_str)
         .map(str::to_string)
-}
-
-fn oac_artwork_identity_link_type_for_provider(provider: &str) -> Option<&str> {
-    match provider {
-        "com.comicartfans" => Some("caf"),
-        "com.snikt" => Some("snikt"),
-        "com.raremarq" => Some("raremarq"),
-        _ => None,
-    }
 }
 
 fn provider_for_oac_link_type(link_type: &str) -> &str {
@@ -1852,10 +1776,13 @@ fn validate_archive_directory_entry(path: &str) -> Result<()> {
 fn validate_archive_path(path: &str, label: &str) -> Result<()> {
     if path.is_empty()
         || path.starts_with('/')
+        || (path.len() > 1
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && path.as_bytes()[1] == b':')
         || path.contains('\\')
-        || path
-            .split('/')
-            .any(|segment| !is_safe_archive_path_component(segment))
+        || path.split('/').any(|segment| {
+            segment.is_empty() || segment == "." || segment == ".." || segment.contains('\0')
+        })
     {
         return Err(AppError::Message(format!("Unsafe {label}: {path}")));
     }
@@ -1881,7 +1808,7 @@ fn validate_required_archive_entries(
 }
 
 fn validate_schema(schema_version: &str, path: &str) -> Result<()> {
-    if schema_version != OAA_SCHEMA_VERSION {
+    if !matches!(schema_version, "1.0" | "0.1") {
         return Err(AppError::Message(format!(
             "Unsupported OAA schema version in {path}: {schema_version}"
         )));
@@ -1890,6 +1817,9 @@ fn validate_schema(schema_version: &str, path: &str) -> Result<()> {
 }
 
 fn validate_manifest_value(value: &Value, path: &str) -> Result<()> {
+    if value.get("schema_version").and_then(Value::as_str) == Some("1.0") {
+        return Ok(());
+    }
     match value {
         Value::String(value) if is_apparent_local_path(value) => Err(AppError::Message(format!(
             "OAA manifest contains a local filesystem path in {path}: {value}"
@@ -1944,10 +1874,16 @@ fn read_zip_json<T: for<'de> Deserialize<'de>>(
 }
 
 fn read_zip_string(zip: &mut ZipArchive<fs::File>, path: &str) -> Result<String> {
-    let mut file = zip.by_name(path)?;
+    let limit = crate::oaa_validation::OaaValidationLimits::default().max_manifest_size;
+    let mut file = zip.by_name(path)?.take(limit + 1);
     let mut value = String::new();
     file.read_to_string(&mut value)?;
-    Ok(value)
+    if value.len() as u64 > limit {
+        return Err(AppError::Message(
+            "OAA capacity_exceeded: manifest too large".into(),
+        ));
+    }
+    Ok(value.trim_start_matches('\u{feff}').to_string())
 }
 
 fn extract_zip_file(
@@ -1956,11 +1892,74 @@ fn extract_zip_file(
     destination: &Path,
 ) -> Result<()> {
     let mut source = zip.by_name(zip_path)?;
+    reject_filesystem_redirections(destination)?;
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut output = fs::File::create(destination)?;
-    std::io::copy(&mut source, &mut output)?;
+    reject_filesystem_redirections(destination)?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    let limit = crate::oaa_validation::OaaValidationLimits::default().max_entry_size;
+    if std::io::copy(&mut source.by_ref().take(limit + 1), &mut output)? > limit {
+        return Err(AppError::Message(
+            "OAA capacity_exceeded while extracting".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn reject_filesystem_redirections(path: &Path) -> Result<()> {
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                #[cfg(windows)]
+                let redirected = {
+                    use std::os::windows::fs::MetadataExt;
+                    metadata.file_attributes() & 0x400 != 0
+                };
+                #[cfg(not(windows))]
+                let redirected = false;
+                if metadata.is_symlink() || redirected {
+                    return Err(AppError::Message(
+                        "OAA destination_unsupported: filesystem redirection in destination".into(),
+                    ));
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn validate_extraction_paths(destination: &Path, paths: &BTreeSet<String>) -> Result<()> {
+    reject_filesystem_redirections(destination)?;
+    // Use a conservative portable destination map on every platform. Archive
+    // validity remains case-sensitive; an unrepresentable destination is separate.
+    let mut names = BTreeMap::new();
+    for path in paths {
+        let mut prefix = String::new();
+        for component in path.split('/') {
+            if !is_safe_archive_path_component(component) {
+                return Err(AppError::Message("OAA destination_unsupported: archive name cannot be represented by the portable extraction policy".into()));
+            }
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            let key = prefix.nfc().collect::<String>().to_uppercase();
+            if names
+                .insert(key, prefix.clone())
+                .is_some_and(|previous| previous != prefix)
+            {
+                return Err(AppError::Message(
+                    "OAA destination_unsupported: case or Unicode collision".into(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2007,6 +2006,8 @@ fn join_archive_path(parent: &str, child: &str) -> Result<String> {
 }
 
 fn unique_child_folder(parent: &Path, name: &str) -> Result<PathBuf> {
+    reject_filesystem_redirections(parent)?;
+    fs::create_dir_all(parent)?;
     let base = safe_file_name(name, "Imported Collection");
     for index in 0..10_000 {
         let candidate_name = if index == 0 {
@@ -2015,9 +2016,10 @@ fn unique_child_folder(parent: &Path, name: &str) -> Result<PathBuf> {
             format!("{base} {index}")
         };
         let candidate = parent.join(candidate_name);
-        if !candidate.exists() {
-            fs::create_dir_all(&candidate)?;
-            return Ok(candidate);
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
         }
     }
     Err(AppError::Message(format!(

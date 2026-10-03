@@ -100,10 +100,53 @@ impl<'a> ManifestProjector<'a> {
             .parent()
             .unwrap_or(&manifest_path)
             .to_path_buf();
-        Ok((
-            manifest_path,
-            artwork_manifest_from_detail(&detail, &asset_folder),
-        ))
+        let mut manifest = artwork_manifest_from_detail(&detail, &asset_folder);
+        manifest.external_links =
+            self.catalog
+                .retained_oaa_links("artwork", artwork_id, manifest.external_links)?;
+        for (key, value) in self.catalog.oaa_extension_blocks("artwork", artwork_id)? {
+            manifest.extensions.entry(key).or_insert(value);
+        }
+        if let Some(public) = &mut manifest.public_metadata {
+            for (key, value) in self
+                .catalog
+                .oaa_extension_blocks("artwork_public_metadata", artwork_id)?
+            {
+                public.extensions.insert(key, value);
+            }
+        }
+        let private_extensions = self
+            .catalog
+            .oaa_extension_blocks("artwork_private_metadata", artwork_id)?;
+        if !private_extensions.is_empty() {
+            let private = manifest.private_metadata.get_or_insert_with(|| {
+                crate::manifest::ArtworkPrivateMetadata {
+                    purchase_price: None,
+                    estimated_value: None,
+                    purchase_date: None,
+                    provenance: None,
+                    personal_notes: None,
+                    extensions: Default::default(),
+                }
+            });
+            private.extensions.extend(private_extensions);
+        }
+        for file in &mut manifest.files {
+            if let Some((prefix, id)) = file.id.split_once('-') {
+                if let Ok(id) = id.parse() {
+                    self.catalog.restore_oaa_file(
+                        if prefix == "derived" {
+                            "derived_asset"
+                        } else {
+                            "file_asset"
+                        },
+                        id,
+                        file,
+                    )?;
+                }
+            }
+        }
+        Ok((manifest_path, manifest))
     }
 }
 

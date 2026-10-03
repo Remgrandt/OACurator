@@ -1,4 +1,4 @@
-use crate::path_safety::is_safe_archive_path_component;
+mod zip_content;
 use crate::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 use unicode_normalization::UnicodeNormalization;
 use url::Url;
 use zip::{CompressionMethod, ZipArchive};
+use zip_content::ReadError;
 
 pub const OAA_MEDIA_TYPE: &str = "application/vnd.original-art-archive+zip";
 
-const OAA_SCHEMA_VERSION: &str = "0.1";
+pub const OAA_SCHEMA_VERSION: &str = "1.0";
 const KNOWN_FILE_KINDS: &[&str] = &["raw", "derivative", "supporting"];
 const KNOWN_IMAGE_ROLES: &[&str] = &[
     "raw_scan",
@@ -84,7 +85,12 @@ pub struct OaaValidationIssue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OaaValidationReport {
     pub input: PathBuf,
-    pub valid: bool,
+    pub valid: Option<bool>,
+    pub status: String,
+    pub complete: bool,
+    pub schema_version: Option<String>,
+    #[serde(skip)]
+    limits: OaaValidationLimits,
     pub issues: Vec<OaaValidationIssue>,
 }
 
@@ -95,6 +101,8 @@ pub struct OaaValidationLimits {
     pub max_entries: usize,
     pub max_entry_size: u64,
     pub max_manifest_size: u64,
+    pub max_json_depth: usize,
+    pub max_directory_size: u64,
 }
 
 impl Default for OaaValidationLimits {
@@ -105,6 +113,8 @@ impl Default for OaaValidationLimits {
             max_entries: 100_000,
             max_entry_size: 1024 * 1024 * 1024,
             max_manifest_size: 10 * 1024 * 1024,
+            max_json_depth: 100,
+            max_directory_size: 16 * 1024 * 1024,
         }
     }
 }
@@ -113,7 +123,11 @@ impl OaaValidationReport {
     fn new(input: &Path) -> Self {
         Self {
             input: input.to_path_buf(),
-            valid: true,
+            valid: Some(true),
+            status: "valid".into(),
+            complete: false,
+            schema_version: None,
+            limits: OaaValidationLimits::default(),
             issues: Vec::new(),
         }
     }
@@ -128,7 +142,8 @@ impl OaaValidationReport {
         json_pointer: Option<String>,
     ) {
         if severity.fails_import() {
-            self.valid = false;
+            self.valid = Some(false);
+            self.status = "invalid".into();
         }
         self.issues.push(OaaValidationIssue {
             rule_id: rule_id.into(),
@@ -140,6 +155,50 @@ impl OaaValidationReport {
         });
     }
 
+    fn v1(&self) -> bool {
+        self.schema_version.as_deref() == Some("1.0")
+    }
+
+    fn stopped(&mut self, status: &str, rule: &str, message: &str, path: &str) {
+        if self.valid != Some(false) {
+            self.valid = None;
+            self.status = status.into();
+        }
+        self.complete = false;
+        self.push(OaaValidationSeverity::Info, rule, message, path, None, None);
+    }
+
+    fn read_error(&mut self, error: ReadError, path: &str) {
+        match error {
+            ReadError::Capacity => self.stopped(
+                "capacity_exceeded",
+                "security.resource_limits",
+                "Input exceeds configured processing limits.",
+                path,
+            ),
+            ReadError::Unsupported => self.stopped(
+                "unsupported",
+                "manifests.schema_version_supported",
+                "Archive encoding is unsupported.",
+                path,
+            ),
+            ReadError::Io => self.stopped(
+                "io_error",
+                "package.archive_readable",
+                "Input could not be completely read.",
+                path,
+            ),
+            ReadError::Malformed => self.push(
+                OaaValidationSeverity::Fatal,
+                "package.archive_readable",
+                "Archive content is malformed or fails integrity verification.",
+                path,
+                None,
+                None,
+            ),
+        }
+    }
+
     pub fn first_blocking_issue(&self) -> Option<&OaaValidationIssue> {
         self.issues
             .iter()
@@ -149,14 +208,20 @@ impl OaaValidationReport {
 
 struct ArchiveIndex {
     file_paths: BTreeSet<String>,
+    file_sizes: BTreeMap<String, u64>,
 }
 
 pub fn ensure_oaa_archive_valid(path: &Path) -> Result<()> {
     let report = validate_oaa_archive_file(path)?;
-    if let Some(issue) = report.first_blocking_issue() {
+    if report.valid != Some(true) || !report.complete {
+        let message = report
+            .first_blocking_issue()
+            .or_else(|| report.issues.last())
+            .map(|issue| issue.message.as_str())
+            .unwrap_or("Validation did not complete");
         return Err(AppError::Message(format!(
-            "OAA archive validation failed: {}",
-            issue.message
+            "OAA {}: {message}",
+            report.status
         )));
     }
     Ok(())
@@ -181,38 +246,34 @@ pub fn validate_oaa_archive_file_with_limits(
             None,
         );
     }
-    if path.exists() && path.is_file() && path.metadata()?.len() > limits.max_archive_size {
-        report.push(
-            OaaValidationSeverity::Fatal,
-            "security.resource_limits",
-            "Archive exceeds the configured archive size limit.",
-            path.display().to_string(),
-            None,
-            None,
-        );
-    }
-
-    let file = fs::File::open(path)?;
-    let mut zip = match ZipArchive::new(file) {
-        Ok(zip) => zip,
-        Err(_) => {
-            report.push(
-                OaaValidationSeverity::Fatal,
-                "package.archive_readable",
-                "Input is not a readable ZIP-compatible OAA archive.",
-                path.display().to_string(),
-                None,
-                None,
-            );
+    report.limits = limits;
+    let duplicates = match zip_content::preflight(path, limits) {
+        Ok(duplicates) => duplicates,
+        Err(error) => {
+            report.read_error(error, "archive");
             return Ok(report);
         }
     };
-
-    let index = validate_zip_package(&mut zip, &mut report, limits)?;
-    validate_mimetype(&mut zip, &mut report);
-    let mut manifests = BTreeMap::new();
+    let mut zip = match ZipArchive::new(fs::File::open(path)?) {
+        Ok(zip) => zip,
+        Err(_) => {
+            report.read_error(ReadError::Malformed, "archive");
+            return Ok(report);
+        }
+    };
+    if duplicates.contains(".oacollection") {
+        report.push(
+            OaaValidationSeverity::Fatal,
+            "package.duplicate_entries",
+            "Ambiguous duplicate root manifest.",
+            ".oacollection",
+            None,
+            None,
+        );
+        return Ok(report);
+    }
     let Some(collection) = parse_manifest(&mut zip, &mut report, ".oacollection") else {
-        if !index.file_paths.contains(".oacollection") {
+        if zip.index_for_name(".oacollection").is_none() {
             report.push(
                 OaaValidationSeverity::Fatal,
                 "collection.manifest_present",
@@ -224,9 +285,42 @@ pub fn validate_oaa_archive_file_with_limits(
         }
         return Ok(report);
     };
-    manifests.insert(".oacollection".to_string(), collection.clone());
+    if report.status != "valid" {
+        return Ok(report);
+    }
+    for path in duplicates {
+        report.push(
+            OaaValidationSeverity::Fatal,
+            "package.duplicate_entries",
+            "Duplicate archive entry.",
+            path,
+            None,
+            None,
+        );
+    }
+    let index = validate_zip_package(&mut zip, &mut report, limits)?;
+    if report.status != "valid" {
+        return Ok(report);
+    }
+    let mut total = 0;
+    for index in 0..zip.len() {
+        let remaining = limits
+            .max_uncompressed_size
+            .saturating_sub(total)
+            .min(limits.max_entry_size);
+        match zip_content::read_entry(&mut zip, path, index, remaining, false) {
+            Ok((size, _)) => total += size,
+            Err(error) => {
+                report.read_error(error, "archive");
+                return Ok(report);
+            }
+        }
+    }
+    validate_mimetype(&mut zip, &mut report);
+    let mut manifests = BTreeMap::from([(".oacollection".into(), collection.clone())]);
     validate_collection(&mut zip, &index, &mut report, &collection, &mut manifests);
     validate_schema_versions_match(&mut report, &manifests);
+    report.complete = matches!(report.status.as_str(), "valid" | "invalid");
     Ok(report)
 }
 
@@ -236,30 +330,32 @@ fn validate_zip_package(
     limits: OaaValidationLimits,
 ) -> Result<ArchiveIndex> {
     if zip.len() > limits.max_entries {
-        report.push(
-            OaaValidationSeverity::Fatal,
+        report.stopped(
+            "capacity_exceeded",
             "security.resource_limits",
             "Archive entry count exceeds the configured limit.",
-            report.input.display().to_string(),
-            None,
-            None,
+            &report.input.display().to_string(),
         );
     }
+    let mut ranges = Vec::new();
     let mut seen = BTreeSet::new();
+    let mut file_sizes = BTreeMap::new();
     let mut file_paths = BTreeSet::new();
     let mut total_uncompressed_size = 0u64;
     for index in 0..zip.len() {
         let file = zip.by_index_raw(index)?;
         let path = file.name().to_string();
+        ranges.push((
+            file.header_start(),
+            file.data_start().saturating_add(file.compressed_size()),
+        ));
         total_uncompressed_size = total_uncompressed_size.saturating_add(file.size());
         if file.size() > limits.max_entry_size {
-            report.push(
-                OaaValidationSeverity::Fatal,
+            report.stopped(
+                "capacity_exceeded",
                 "security.resource_limits",
                 "Archive entry exceeds the configured individual file size limit.",
-                path.clone(),
-                None,
-                None,
+                &path.clone(),
             );
         }
         if !seen.insert(path.clone()) {
@@ -287,7 +383,7 @@ fn validate_zip_package(
             CompressionMethod::Stored | CompressionMethod::Deflated
         ) {
             report.push(
-                OaaValidationSeverity::Warning,
+                OaaValidationSeverity::Fatal,
                 "package.compression_method",
                 "Archive entry does not use Store or Deflate compression.",
                 path.clone(),
@@ -295,23 +391,47 @@ fn validate_zip_package(
                 None,
             );
         }
+        let kind = file.unix_mode().unwrap_or(0) & 0o170000;
+        if !matches!(kind, 0 | 0o100000 | 0o040000)
+            || (kind == 0o040000 && !file.is_dir())
+            || (kind == 0o100000 && file.is_dir())
+        {
+            report.push(
+                OaaValidationSeverity::Fatal,
+                "package.entry_type",
+                "Archive entry is not a regular file or directory.",
+                &path,
+                None,
+                None,
+            );
+        }
+        validate_archive_name_encoding(report, &file);
+        validate_archive_name_normalization(report, &path);
         if file.is_dir() {
             validate_archive_directory_path(report, &path);
         } else {
             validate_archive_path(report, &path, "archive entry", None, None);
-            validate_archive_name_encoding(report, &file);
-            validate_archive_name_normalization(report, &path);
+            file_sizes.insert(path.clone(), file.size());
             file_paths.insert(path);
         }
     }
-    if total_uncompressed_size > limits.max_uncompressed_size {
+    ranges.sort_unstable();
+    if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0) {
         report.push(
             OaaValidationSeverity::Fatal,
+            "package.archive_readable",
+            "ZIP entries overlap.",
+            "archive",
+            None,
+            None,
+        );
+    }
+    if total_uncompressed_size > limits.max_uncompressed_size {
+        report.stopped(
+            "capacity_exceeded",
             "security.resource_limits",
             "Archive uncompressed size exceeds the configured limit.",
-            report.input.display().to_string(),
-            None,
-            None,
+            &report.input.display().to_string(),
         );
     }
 
@@ -341,21 +461,41 @@ fn validate_zip_package(
             );
         }
     }
-    Ok(ArchiveIndex { file_paths })
-}
-
-fn validate_archive_name_encoding(report: &mut OaaValidationReport, file: &zip::read::ZipFile<'_>) {
-    if let Ok(raw_name) = std::str::from_utf8(file.name_raw()) {
-        if raw_name.bytes().any(|byte| byte > 127) && raw_name != file.name() {
+    for name in &seen {
+        let parts: Vec<_> = name.trim_end_matches('/').split('/').collect();
+        if (name.ends_with('/') && file_paths.contains(name.trim_end_matches('/')))
+            || (1..parts.len()).any(|n| file_paths.contains(&parts[..n].join("/")))
+        {
             report.push(
                 OaaValidationSeverity::Fatal,
-                "paths.utf8_names",
-                "Non-ASCII archive entry name is not marked as UTF-8.",
-                file.name().to_string(),
+                "package.path_conflict",
+                "Archive file/directory conflict.",
+                name,
                 None,
                 None,
             );
         }
+    }
+    Ok(ArchiveIndex {
+        file_paths,
+        file_sizes,
+    })
+}
+
+fn validate_archive_name_encoding(report: &mut OaaValidationReport, file: &zip::read::ZipFile<'_>) {
+    if std::str::from_utf8(file.name_raw()).is_err()
+        || std::str::from_utf8(file.name_raw()).is_ok_and(|raw_name| {
+            raw_name.bytes().any(|byte| byte > 127) && raw_name != file.name()
+        })
+    {
+        report.push(
+            OaaValidationSeverity::Fatal,
+            "paths.utf8_names",
+            "Non-ASCII archive entry name is not valid UTF-8.",
+            file.name(),
+            None,
+            None,
+        );
     }
 }
 
@@ -373,11 +513,13 @@ fn validate_archive_name_normalization(report: &mut OaaValidationReport, path: &
 }
 
 fn validate_archive_directory_path(report: &mut OaaValidationReport, path: &str) {
-    let trimmed = path.trim_end_matches('/');
-    if trimmed.is_empty() {
-        return;
-    }
-    validate_archive_path(report, trimmed, "archive directory entry", None, None);
+    validate_archive_path(
+        report,
+        path.strip_suffix('/').unwrap_or(path),
+        "archive directory entry",
+        None,
+        None,
+    );
 }
 
 fn validate_archive_path(
@@ -409,16 +551,19 @@ fn validate_archive_path_with_rule(
     if path.is_empty() {
         safe = false;
     }
-    if path.starts_with('/') {
+    if path.starts_with('/')
+        || (path.len() > 1
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && path.as_bytes()[1] == b':')
+    {
         safe = false;
     }
     if path.contains('\\') {
         safe = false;
     }
-    if path
-        .split('/')
-        .any(|segment| !is_safe_archive_path_component(segment))
-    {
+    if path.split('/').any(|segment| {
+        segment.is_empty() || segment == "." || segment == ".." || segment.contains('\0')
+    }) {
         safe = false;
     }
     if !safe {
@@ -461,7 +606,11 @@ fn validate_mimetype(zip: &mut ZipArchive<fs::File>, report: &mut OaaValidationR
         }
     };
     let mut data = Vec::new();
-    if let Err(error) = file.read_to_end(&mut data) {
+    if let Err(error) = file
+        .by_ref()
+        .take(OAA_MEDIA_TYPE.len() as u64 + 1)
+        .read_to_end(&mut data)
+    {
         report.push(
             OaaValidationSeverity::Fatal,
             "package.mimetype_present",
@@ -489,14 +638,50 @@ fn parse_manifest(
     report: &mut OaaValidationReport,
     path: &str,
 ) -> Option<Value> {
-    let mut file = match zip.by_name(path) {
-        Ok(file) => file,
-        Err(zip::result::ZipError::FileNotFound) => return None,
+    let index = zip.index_for_name(path)?;
+    if let Ok(file) = zip.by_index_raw(index) {
+        if file.encrypted() {
+            report.push(
+                OaaValidationSeverity::Fatal,
+                "package.encrypted_entries",
+                "Archive entry is encrypted.",
+                path,
+                None,
+                None,
+            );
+            return None;
+        }
+        if !matches!(file.unix_mode().unwrap_or(0) & 0o170000, 0 | 0o100000) || file.is_dir() {
+            report.push(
+                OaaValidationSeverity::Fatal,
+                "package.entry_type",
+                "Manifest is not a regular file.",
+                path,
+                None,
+                None,
+            );
+            return None;
+        }
+    }
+    let limit = report
+        .limits
+        .max_manifest_size
+        .min(report.limits.max_entry_size)
+        .min(report.limits.max_uncompressed_size);
+    let bytes = match zip_content::read_entry(zip, &report.input, index, limit, true) {
+        Ok((_, bytes)) => bytes,
         Err(error) => {
+            report.read_error(error, path);
+            return None;
+        }
+    };
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(_) => {
             report.push(
                 OaaValidationSeverity::Fatal,
                 "manifests.json_object",
-                format!("Manifest cannot be read as UTF-8 JSON: {error}"),
+                "Manifest is not UTF-8 JSON.",
                 path,
                 Some(path),
                 None,
@@ -504,15 +689,12 @@ fn parse_manifest(
             return None;
         }
     };
-    let mut text = String::new();
-    if let Err(error) = file.read_to_string(&mut text) {
-        report.push(
-            OaaValidationSeverity::Fatal,
-            "manifests.json_object",
-            format!("Manifest cannot be read as UTF-8 JSON: {error}"),
+    if !within_json_depth(&text, report.limits.max_json_depth) {
+        report.stopped(
+            "capacity_exceeded",
+            "security.resource_limits",
+            "Manifest exceeds configured JSON nesting limit.",
             path,
-            Some(path),
-            None,
         );
         return None;
     }
@@ -541,6 +723,15 @@ fn parse_manifest(
     let value = match serde_json::from_str::<Value>(text) {
         Ok(value) => value,
         Err(error) => {
+            if error.to_string().contains("number out of range") {
+                report.stopped(
+                    "capacity_exceeded",
+                    "security.resource_limits",
+                    "JSON number exceeds supported numeric range.",
+                    path,
+                );
+                return None;
+            }
             report.push(
                 OaaValidationSeverity::Fatal,
                 "manifests.json_object",
@@ -563,12 +754,35 @@ fn parse_manifest(
         );
         return None;
     }
+    if path == ".oacollection" {
+        report.schema_version = value
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+    }
     validate_schema_version(report, &value, path);
+    if report.v1() {
+        validate_v1_fields(report, &value, path);
+    }
     scan_manifest_for_local_paths(report, &value, path, "");
     Some(value)
 }
 
 fn validate_schema_version(report: &mut OaaValidationReport, manifest: &Value, path: &str) {
+    if path != ".oacollection"
+        && report.v1()
+        && manifest.get("schema_version").and_then(Value::as_str) != Some("1.0")
+    {
+        report.push(
+            OaaValidationSeverity::Fatal,
+            "manifests.schema_version_supported",
+            "Referenced manifest must use schema_version 1.0.",
+            path,
+            Some(path),
+            Some("/schema_version".into()),
+        );
+        return;
+    }
     match manifest.get("schema_version") {
         None => report.push(
             OaaValidationSeverity::Fatal,
@@ -578,7 +792,13 @@ fn validate_schema_version(report: &mut OaaValidationReport, manifest: &Value, p
             Some(path),
             Some("/schema_version".to_string()),
         ),
-        Some(Value::String(version)) if version == OAA_SCHEMA_VERSION => {}
+        Some(Value::String(version)) if matches!(version.as_str(), "1.0" | "0.1") => {}
+        Some(Value::String(version)) if !version.is_empty() => report.stopped(
+            "unsupported",
+            "manifests.schema_version_supported",
+            "Manifest version is not supported.",
+            path,
+        ),
         Some(_) => report.push(
             OaaValidationSeverity::Fatal,
             "manifests.schema_version_supported",
@@ -652,6 +872,9 @@ fn validate_collection(
         .filter_map(|reference| string_field(reference, "id"))
         .collect::<BTreeSet<_>>();
 
+    if report.valid == Some(false) {
+        return;
+    }
     for gallery_ref in gallery_refs {
         let Some(path) = string_field(gallery_ref, "path") else {
             continue;
@@ -684,6 +907,9 @@ fn validate_collection(
         }
     }
 
+    if report.status == "capacity_exceeded" {
+        return;
+    }
     for artwork_ref in artwork_refs {
         let Some(path) = string_field(artwork_ref, "path") else {
             continue;
@@ -896,7 +1122,7 @@ fn validate_manifest_path(
         Some(manifest),
         Some(pointer.clone()),
     );
-    if path != path.trim() {
+    if !report.v1() && path != path.trim() {
         report.push(
             OaaValidationSeverity::Fatal,
             "paths.manifest_path_safe",
@@ -1140,7 +1366,10 @@ fn validate_public_metadata(
         );
         return;
     };
-    if let Some(status) = metadata.get("publication_status") {
+    if let Some(status) = metadata
+        .get("publication_status")
+        .filter(|v| !report.v1() || !v.is_null())
+    {
         if !matches!(
             status.as_str(),
             Some("published_art") | Some("unpublished_art")
@@ -1155,7 +1384,10 @@ fn validate_public_metadata(
             );
         }
     }
-    if let Some(is_public) = metadata.get("is_public") {
+    if let Some(is_public) = metadata
+        .get("is_public")
+        .filter(|v| !report.v1() || !v.is_null())
+    {
         if !is_public.is_boolean() {
             report.push(
                 OaaValidationSeverity::Fatal,
@@ -1389,6 +1621,32 @@ fn validate_files(
                 Some(format!("{pointer}/relative_path")),
             ),
         }
+        if report.v1() {
+            if let (Some(relative), Some(size)) = (
+                file_entry.get("relative_path").and_then(Value::as_str),
+                file_entry.get("size_bytes").filter(|v| !v.is_null()),
+            ) {
+                let resolved = if artwork_dir.is_empty() {
+                    relative.into()
+                } else {
+                    format!("{artwork_dir}/{relative}")
+                };
+                if index
+                    .file_sizes
+                    .get(&resolved)
+                    .is_some_and(|actual| size.as_f64() != Some(*actual as f64))
+                {
+                    report.push(
+                        OaaValidationSeverity::Fatal,
+                        "files.size_bytes",
+                        "Declared file size does not match embedded bytes.",
+                        artwork_manifest,
+                        Some(artwork_manifest),
+                        Some(format!("{pointer}/size_bytes")),
+                    );
+                }
+            }
+        }
         match file_entry.get("file_kind").and_then(Value::as_str) {
             Some(kind) if KNOWN_FILE_KINDS.contains(&kind) => {}
             _ => report.push(
@@ -1400,7 +1658,10 @@ fn validate_files(
                 Some(format!("{pointer}/file_kind")),
             ),
         }
-        if let Some(role) = file_entry.get("image_role") {
+        if let Some(role) = file_entry
+            .get("image_role")
+            .filter(|v| !report.v1() || !v.is_null())
+        {
             if !matches!(role.as_str(), Some(role) if KNOWN_IMAGE_ROLES.contains(&role)) {
                 report.push(
                     OaaValidationSeverity::Fatal,
@@ -1501,7 +1762,7 @@ fn validate_external_links(
     let Some(links) = links else {
         return;
     };
-    if links.is_null() {
+    if links.is_null() && !report.v1() {
         return;
     }
     let Some(links) = links.as_array() else {
@@ -1551,7 +1812,7 @@ fn validate_external_links(
             ),
         }
         match link.get("id").and_then(Value::as_str) {
-            Some(id) if !id.is_empty() => {}
+            Some(id) if !id.trim().is_empty() => {}
             _ => report.push(
                 OaaValidationSeverity::Fatal,
                 "external_links.id",
@@ -1562,9 +1823,19 @@ fn validate_external_links(
             ),
         }
         match link.get("url") {
-            Some(Value::String(url)) if url.is_empty() || Url::parse(url).is_ok() => {}
+            Some(Value::String(url))
+                if url.is_empty()
+                    || (if report.v1() {
+                        valid_absolute_uri(url)
+                    } else {
+                        Url::parse(url).is_ok()
+                    }) => {}
             Some(Value::String(_)) => report.push(
-                OaaValidationSeverity::Warning,
+                if report.v1() {
+                    OaaValidationSeverity::Fatal
+                } else {
+                    OaaValidationSeverity::Warning
+                },
                 "external_links.url",
                 "External link `url` is non-empty but not absolute.",
                 manifest,
@@ -1646,7 +1917,8 @@ fn validate_extensions(
             );
             continue;
         };
-        for field in base_fields {
+        let check_shadow = !report.v1();
+        for field in base_fields.iter().filter(|_| check_shadow) {
             if parent.contains_key(*field) && block.contains_key(*field) {
                 report.push(
                     OaaValidationSeverity::Fatal,
@@ -1658,7 +1930,7 @@ fn validate_extensions(
                 );
             }
         }
-        if block.contains_key("extensions") {
+        if !report.v1() && block.contains_key("extensions") {
             report.push(
                 OaaValidationSeverity::Fatal,
                 "extensions.no_nested_extensions",
@@ -1699,7 +1971,11 @@ fn scan_manifest_for_local_paths(
             }
         }
         Value::String(value) if is_apparent_local_path(value) => report.push(
-            OaaValidationSeverity::Fatal,
+            if report.v1() {
+                OaaValidationSeverity::Warning
+            } else {
+                OaaValidationSeverity::Fatal
+            },
             "security.local_path_in_manifest",
             "Manifest value contains an apparent absolute local filesystem path.",
             manifest,
@@ -1835,33 +2111,16 @@ impl JsonDuplicateScanner {
     }
 
     fn scan_string(&mut self) -> std::result::Result<String, ()> {
+        let start = self.index;
         self.expect('"')?;
-        let mut output = String::new();
         while let Some(ch) = self.next() {
-            match ch {
-                '"' => return Ok(output),
-                '\\' => match self.next().ok_or(())? {
-                    '"' => output.push('"'),
-                    '\\' => output.push('\\'),
-                    '/' => output.push('/'),
-                    'b' => output.push('\u{0008}'),
-                    'f' => output.push('\u{000c}'),
-                    'n' => output.push('\n'),
-                    'r' => output.push('\r'),
-                    't' => output.push('\t'),
-                    'u' => {
-                        let mut value = 0u32;
-                        for _ in 0..4 {
-                            value =
-                                value * 16 + self.next().and_then(|ch| ch.to_digit(16)).ok_or(())?;
-                        }
-                        if let Some(ch) = char::from_u32(value) {
-                            output.push(ch);
-                        }
-                    }
-                    _ => return Err(()),
-                },
-                _ => output.push(ch),
+            if ch == '\\' {
+                self.next().ok_or(())?;
+            } else if ch == '"' {
+                return serde_json::from_str(
+                    &self.chars[start..self.index].iter().collect::<String>(),
+                )
+                .map_err(|_| ());
             }
         }
         Err(())
@@ -1912,4 +2171,303 @@ impl JsonDuplicateScanner {
 
 fn escape_json_pointer(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
+}
+
+fn within_json_depth(text: &str, limit: usize) -> bool {
+    let (mut depth, mut string, mut escaped) = (0usize, false, false);
+    for byte in text.bytes() {
+        if string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                string = false;
+            }
+        } else {
+            match byte {
+                b'"' => string = true,
+                b'{' | b'[' => {
+                    depth += 1;
+                    if depth > limit.min(100) {
+                        return false;
+                    }
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    true
+}
+
+fn valid_absolute_uri(value: &str) -> bool {
+    if !value.is_ascii()
+        || value
+            .bytes()
+            .any(|c| c <= 32 || c >= 127 || b"<>\"{}|\\^`".contains(&c))
+    {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    for (i, c) in bytes.iter().enumerate() {
+        if *c == b'%'
+            && (i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_hexdigit()
+                || !bytes[i + 2].is_ascii_hexdigit())
+        {
+            return false;
+        }
+    }
+    let Some((scheme, rest)) = value.split_once(':') else {
+        return false;
+    };
+    if scheme.is_empty()
+        || !scheme.as_bytes()[0].is_ascii_alphabetic()
+        || !scheme
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"+.-".contains(&c))
+        || scheme.eq_ignore_ascii_case("file")
+        || (scheme.len() == 1 && rest.starts_with('/'))
+        || rest.is_empty()
+    {
+        return false;
+    }
+    let (body, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    if fragment.contains('#') || fragment.contains(['[', ']']) {
+        return false;
+    }
+    let (body, query) = body.split_once('?').unwrap_or((body, ""));
+    if query.contains(['[', ']']) {
+        return false;
+    }
+    if let Some(authority_path) = body.strip_prefix("//") {
+        let (authority, path) = authority_path
+            .split_once('/')
+            .unwrap_or((authority_path, ""));
+        if path.contains(['[', ']']) || authority.matches('@').count() > 1 {
+            return false;
+        }
+        if authority
+            .split_once('@')
+            .is_some_and(|(user, _)| user.contains(['[', ']']))
+        {
+            return false;
+        }
+        let hostport = authority
+            .rsplit_once('@')
+            .map(|(_, host)| host)
+            .unwrap_or(authority);
+        if let Some(literal) = hostport.strip_prefix('[') {
+            let Some((host, tail)) = literal.split_once(']') else {
+                return false;
+            };
+            if !(host.parse::<std::net::Ipv6Addr>().is_ok()
+                || host
+                    .strip_prefix(['v', 'V'])
+                    .and_then(|h| h.split_once('.'))
+                    .is_some_and(|(version, address)| {
+                        !version.is_empty()
+                            && version.bytes().all(|b| b.is_ascii_hexdigit())
+                            && !address.is_empty()
+                            && address.bytes().all(|b| {
+                                b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:".contains(&b)
+                            })
+                    }))
+                || !(tail.is_empty()
+                    || tail
+                        .strip_prefix(':')
+                        .is_some_and(|port| port.bytes().all(|b| b.is_ascii_digit())))
+            {
+                return false;
+            }
+        } else {
+            if hostport.contains(['[', ']']) {
+                return false;
+            }
+            if let Some((host, port)) = hostport.split_once(':') {
+                if host.contains(':') || !port.bytes().all(|b| b.is_ascii_digit()) {
+                    return false;
+                }
+            }
+        }
+        if matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https")
+            && (hostport.is_empty() || hostport.starts_with(':'))
+        {
+            return false;
+        }
+    } else if body.contains(['[', ']'])
+        || matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https")
+    {
+        return false;
+    }
+    true
+}
+
+fn validate_v1_fields(report: &mut OaaValidationReport, manifest: &Value, path: &str) {
+    fn field(
+        report: &mut OaaValidationReport,
+        object: &Value,
+        name: &str,
+        kind: &str,
+        nullable: bool,
+        path: &str,
+        prefix: &str,
+    ) {
+        let Some(value) = object.get(name) else {
+            return;
+        };
+        if nullable && value.is_null() {
+            return;
+        }
+        let valid = match kind {
+            "string" => value.is_string(),
+            "boolean" => value.is_boolean(),
+            "integer" => value
+                .as_f64()
+                .is_some_and(|v| v.is_finite() && v >= 0.0 && v.fract() == 0.0),
+            "positive_integer" => value
+                .as_f64()
+                .is_some_and(|v| v.is_finite() && v > 0.0 && v.fract() == 0.0),
+            "positive" => value.as_f64().is_some_and(|v| v.is_finite() && v > 0.0),
+            _ => false,
+        };
+        if valid
+            && matches!(kind, "integer" | "positive_integer")
+            && value.as_i64().is_none()
+            && value.as_f64().is_some_and(|n| n >= 9223372036854775808.0)
+        {
+            report.stopped(
+                "capacity_exceeded",
+                "security.resource_limits",
+                "File metadata integer exceeds signed 64-bit capacity.",
+                path,
+            );
+        }
+        if !valid {
+            report.push(
+                OaaValidationSeverity::Fatal,
+                "manifests.field_type",
+                "Field has an invalid JSON type or value.",
+                path,
+                Some(path),
+                Some(format!("{prefix}/{name}")),
+            );
+        }
+    }
+    if path == ".oacollection" {
+        if let Some(refs) = manifest.get("galleries").and_then(Value::as_array) {
+            for (i, r) in refs.iter().enumerate() {
+                field(
+                    report,
+                    r,
+                    "name",
+                    "string",
+                    false,
+                    path,
+                    &format!("/galleries/{i}"),
+                );
+            }
+        }
+        for (key, suffix) in [("galleries", "/.oagallery"), ("artworks", "/.oaartwork")] {
+            if let Some(refs) = manifest.get(key).and_then(Value::as_array) {
+                for r in refs {
+                    if r.get("path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|p| !p.ends_with(suffix) || p.len() == suffix.len())
+                    {
+                        report.push(
+                            OaaValidationSeverity::Fatal,
+                            "paths.manifest_path_safe",
+                            "Reference does not locate the required manifest kind.",
+                            path,
+                            Some(path),
+                            Some(format!("/{key}")),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    if let Some(public) = manifest.get("public_metadata") {
+        for key in ["description", "for_sale_status", "media", "artwork_type"] {
+            field(
+                report,
+                public,
+                key,
+                "string",
+                true,
+                path,
+                "/public_metadata",
+            );
+        }
+        if let Some(credits) = public.get("artist_credits").and_then(Value::as_array) {
+            for (i, credit) in credits.iter().enumerate() {
+                for key in ["display_name", "first_name", "last_name", "role"] {
+                    field(
+                        report,
+                        credit,
+                        key,
+                        "string",
+                        true,
+                        path,
+                        &format!("/public_metadata/artist_credits/{i}"),
+                    );
+                }
+            }
+        }
+    }
+    if let Some(private) = manifest.get("private_metadata") {
+        for key in [
+            "purchase_price",
+            "estimated_value",
+            "purchase_date",
+            "provenance",
+            "personal_notes",
+        ] {
+            field(
+                report,
+                private,
+                key,
+                "string",
+                true,
+                path,
+                "/private_metadata",
+            );
+        }
+        if let Some(date) = private.get("purchase_date").and_then(Value::as_str) {
+            if date.starts_with("0000")
+                || date.len() != 10
+                || chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                    .ok()
+                    .is_none_or(|d| d.format("%Y-%m-%d").to_string() != date)
+            {
+                report.push(
+                    OaaValidationSeverity::Fatal,
+                    "manifests.field_type",
+                    "Purchase date is not a real YYYY-MM-DD calendar date.",
+                    path,
+                    Some(path),
+                    Some("/private_metadata/purchase_date".into()),
+                );
+            }
+        }
+    }
+    if let Some(files) = manifest.get("files").and_then(Value::as_array) {
+        for (i, file) in files.iter().enumerate() {
+            let prefix = format!("/files/{i}");
+            field(report, file, "file_name", "string", false, path, &prefix);
+            for key in ["format", "media_type"] {
+                field(report, file, key, "string", true, path, &prefix);
+            }
+            field(report, file, "is_primary", "boolean", true, path, &prefix);
+            field(report, file, "size_bytes", "integer", true, path, &prefix);
+            for key in ["width", "height"] {
+                field(report, file, key, "positive_integer", true, path, &prefix);
+            }
+            for key in ["dpi_x", "dpi_y"] {
+                field(report, file, key, "positive", true, path, &prefix);
+            }
+        }
+    }
 }

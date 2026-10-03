@@ -105,8 +105,10 @@ export function OaaExportDialog({
               Include private collector metadata
             </label>
             <p className="workspace-command-note">
-              Turn this on only for private backups. Private metadata includes purchase, value,
-              provenance, and personal note fields.
+              Off by default: excludes purchase, value, provenance, personal notes, all extension
+              data, and supporting attachments. Turn on for a private backup. Included JPG, PNG, and
+              TIFF files are copied unchanged; review their contents and embedded metadata before
+              sharing.
             </p>
           </fieldset>
 
