@@ -33,6 +33,8 @@ When you open an older Collection folder, OA Curator automatically upgrades its 
 
 The upgrade preserves metadata, private fields, extensions, and original scans. It checks the complete referenced manifest set before replacing any manifest. Unreferenced artwork folders are left alone. Missing scans remain available for the usual missing-file checks; a missing manifest, unsupported version, or incompatible metadata stops the upgrade and explains the problem.
 
+Saved attachment sizes can become out of date when local files change. Those differences do not block the folder upgrade. Exporting a new OAA archive records the sizes of the files actually included and validates the archive.
+
 Before changing anything, OA Curator saves the original manifest contents in a `.oaa-1.0-backup-….json` file in the Collection folder. Keep this backup private: it contains the same private metadata as your Collection. If an upgrade is interrupted, opening the Collection again resumes it. A write failure attempts to restore the original manifests; if recovery cannot finish, opening stops and the backup is retained. Recovery will not overwrite manifests that have been edited separately since the upgrade began.
 
 This upgrades the local folder. It does not modify existing `.oaa` archive files. Use **File > Export OAA Archive** to create a new archive with archive-level validation.

@@ -202,7 +202,6 @@ fn validate_journal(root: &Path, journal: &UpgradeJournal) -> Result<()> {
         ));
     }
     validate_extraction_paths(root, &documents.keys().cloned().collect())?;
-    let mut file_sizes = BTreeMap::new();
     for (path, document) in &documents {
         if let Some(files) = document.get("files").and_then(Value::as_array) {
             for file in files {
@@ -213,9 +212,7 @@ fn validate_journal(root: &Path, journal: &UpgradeJournal) -> Result<()> {
                     let target = root.join(&relative);
                     reject_filesystem_redirections(&target)?;
                     match fs::metadata(target) {
-                        Ok(metadata) if metadata.is_file() => {
-                            file_sizes.insert(relative, metadata.len());
-                        }
+                        Ok(metadata) if metadata.is_file() => {}
                         Ok(_) => return Err(fail("Artwork attachment is not a regular file")),
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         Err(error) => return Err(error.into()),
@@ -224,7 +221,7 @@ fn validate_journal(root: &Path, journal: &UpgradeJournal) -> Result<()> {
             }
         }
     }
-    ensure_upgrade_manifests_valid(&root.join(&journal.collection_file), &documents, file_sizes)?;
+    ensure_upgrade_manifests_valid(&root.join(&journal.collection_file), &documents)?;
     for entry in &journal.manifests {
         check_current(&target_path(root, journal, entry), entry)?;
     }

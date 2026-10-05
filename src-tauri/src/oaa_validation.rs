@@ -231,18 +231,17 @@ pub fn validate_oaa_archive_file(path: &Path) -> Result<OaaValidationReport> {
     validate_oaa_archive_file_with_limits(path, OaaValidationLimits::default())
 }
 
-/// Preflight an in-place local manifest upgrade, not a packaged archive. Missing
-/// media remains a catalog consistency issue; sizes of present files are checked.
+/// Preflight a local metadata upgrade. Files may have changed since their metadata
+/// was saved; exact byte sizes are enforced when validating packaged archives.
 pub(crate) fn ensure_upgrade_manifests_valid(
     collection_path: &Path,
     documents: &BTreeMap<String, Value>,
-    file_sizes: BTreeMap<String, u64>,
 ) -> Result<()> {
     let mut report = OaaValidationReport::new(collection_path);
     report.schema_version = Some(OAA_SCHEMA_VERSION.into());
     let mut index = ArchiveIndex {
         file_paths: documents.keys().cloned().collect(),
-        file_sizes,
+        file_sizes: BTreeMap::new(),
     };
     for (path, document) in documents {
         validate_schema_version(&mut report, document, path);

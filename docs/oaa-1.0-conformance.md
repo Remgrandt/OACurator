@@ -11,7 +11,7 @@ It imposes no OA Curator requirement on the OAA standard.
 
 ## Local Collection upgrade
 
-Opening upgrades only explicitly supported 0.1 documents, including older children under a 1.0 root. It preflights the complete referenced set using the shared 1.0 metadata and cross-reference rules, verifies that the app can deserialize the result, and checks sizes of present attachments. It refuses unsupported versions, duplicate JSON members, unsafe or redirected paths, missing manifests, inconsistent references, and incompatible metadata before mutation. Missing media remains a catalog consistency issue; this metadata upgrade is not a claim of complete archive validation.
+Opening upgrades only explicitly supported 0.1 documents, including older children under a 1.0 root. It preflights the complete referenced set using the shared 1.0 metadata and cross-reference rules, verifies that the app can deserialize the result, and checks that present attachments are regular files at safe paths. It refuses unsupported versions, duplicate JSON members, unsafe or redirected paths, missing manifests, inconsistent references, and incompatible metadata before mutation. Missing media and stale stored file sizes remain local catalog concerns; they do not block this metadata-only upgrade. Exact payload sizes remain required for packaged archives, and exports declare current file lengths. This metadata upgrade is not a claim of complete archive validation.
 
 For compatible documents, only the top-level version token changes. All other source bytes, including unknown fields, numeric spelling, extensions, private data, IDs, membership, and whitespace, are retained. No unreferenced records are discovered or rewritten, and media files are never modified. Backup journals contain the exact before/after manifest text, are synced before installation, and remain in `.oaa-1.0-backup-*.json` files in the Collection folder. These files contain private metadata and are not included in OA Curator's archive exports.
 
@@ -78,6 +78,17 @@ checks passed. An external harness passed 6 upgrade tests and 12 archive tests
 against the public-source library. The pinned official validator accepted both
 legacy and mixed-version folders upgraded by that library with `valid: true` and
 `complete: true`; original attachment hashes and backed-up manifest bytes matched.
+
+Stale local attachment size correction (unreleased), 2026-10-05: a focused
+regression reproduced the 0.5.0 open failure, then passed with this correction.
+The public release checks passed, and an external harness against this library
+passed 7 upgrade tests and 12 archive tests. These cover legacy and mixed-version
+folders with stale sizes, unchanged local metadata and media, exports declaring
+current file lengths, and continued rejection of incorrect archive payload sizes.
+A temporary manifest-only copy with 974 referenced manifests opened successfully;
+only version tokens changed, backups matched original hashes, and read-only checks
+confirmed that the live source manifests remained unchanged. The copy contained
+no media, so this verifies metadata migration rather than payload completeness.
 
 The verification evidence is from Windows. macOS/Linux extraction and packaging
 require their platform checks; archive validity alone does not establish those claims.
