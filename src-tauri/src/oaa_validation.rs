@@ -231,6 +231,107 @@ pub fn validate_oaa_archive_file(path: &Path) -> Result<OaaValidationReport> {
     validate_oaa_archive_file_with_limits(path, OaaValidationLimits::default())
 }
 
+/// Preflight an in-place local manifest upgrade, not a packaged archive. Missing
+/// media remains a catalog consistency issue; sizes of present files are checked.
+pub(crate) fn ensure_upgrade_manifests_valid(
+    collection_path: &Path,
+    documents: &BTreeMap<String, Value>,
+    file_sizes: BTreeMap<String, u64>,
+) -> Result<()> {
+    let mut report = OaaValidationReport::new(collection_path);
+    report.schema_version = Some(OAA_SCHEMA_VERSION.into());
+    let mut index = ArchiveIndex {
+        file_paths: documents.keys().cloned().collect(),
+        file_sizes,
+    };
+    for (path, document) in documents {
+        validate_schema_version(&mut report, document, path);
+        validate_v1_fields(&mut report, document, path);
+        if let Some(files) = document.get("files").and_then(Value::as_array) {
+            let parent = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+            for file in files {
+                if let Some(relative) = file.get("relative_path").and_then(Value::as_str) {
+                    index.file_paths.insert(format!("{parent}/{relative}"));
+                }
+            }
+        }
+    }
+    let collection = documents.get(".oacollection").ok_or_else(|| {
+        AppError::Message("OAA upgrade is missing the collection manifest".into())
+    })?;
+    validate_collection(
+        &mut |_, path| documents.get(path).cloned(),
+        &index,
+        &mut report,
+        collection,
+        &mut BTreeMap::new(),
+    );
+    if let Some(issue) = report.first_blocking_issue().or_else(|| {
+        (report.status != "valid")
+            .then(|| report.issues.last())
+            .flatten()
+    }) {
+        return Err(AppError::Message(format!(
+            "Cannot upgrade OAA collection: {} ({}: {}). Original manifests were retained.",
+            issue.message, issue.path, issue.rule_id
+        )));
+    }
+    Ok(())
+}
+
+/// Change only the root version token. Re-serializing a Value would normalize
+/// unknown numbers, whitespace and extension data belonging to other software.
+pub(crate) fn prepare_manifest_upgrade(text: &str) -> Result<(Value, String)> {
+    let json = text.trim_start_matches('\u{feff}');
+    if !within_json_depth(json, OaaValidationLimits::default().max_json_depth) {
+        return Err(AppError::Message(
+            "OAA manifest nesting limit exceeded".into(),
+        ));
+    }
+    if let Some(member) = duplicate_json_member(json) {
+        return Err(AppError::Message(format!(
+            "Duplicate OAA JSON member: {member}"
+        )));
+    }
+    let mut value: Value = serde_json::from_str(json)?;
+    match value.get("schema_version").and_then(Value::as_str) {
+        Some("1.0") => return Ok((value, text.into())),
+        Some("0.1") => {}
+        _ => {
+            return Err(AppError::Message(
+                "Unsupported OAA manifest version; upgrade stopped".into(),
+            ))
+        }
+    }
+    let mut scanner = JsonDuplicateScanner::new(json);
+    let replaced = (|| {
+        scanner.skip_whitespace();
+        scanner.expect('{')?;
+        loop {
+            scanner.skip_whitespace();
+            let key = scanner.scan_string()?;
+            scanner.skip_whitespace();
+            scanner.expect(':')?;
+            scanner.skip_whitespace();
+            let start = scanner.index;
+            scanner.scan_value()?;
+            if key == "schema_version" {
+                return Ok::<_, ()>(format!(
+                    "{}{}\"1.0\"{}",
+                    &text[..text.len() - json.len()],
+                    scanner.chars[..start].iter().collect::<String>(),
+                    scanner.chars[scanner.index..].iter().collect::<String>()
+                ));
+            }
+            scanner.skip_whitespace();
+            scanner.expect(',')?;
+        }
+    })()
+    .map_err(|_| AppError::Message("Cannot locate OAA version token".into()))?;
+    value["schema_version"] = Value::String(OAA_SCHEMA_VERSION.into());
+    Ok((value, replaced))
+}
+
 pub fn validate_oaa_archive_file_with_limits(
     path: &Path,
     limits: OaaValidationLimits,
@@ -318,7 +419,13 @@ pub fn validate_oaa_archive_file_with_limits(
     }
     validate_mimetype(&mut zip, &mut report);
     let mut manifests = BTreeMap::from([(".oacollection".into(), collection.clone())]);
-    validate_collection(&mut zip, &index, &mut report, &collection, &mut manifests);
+    validate_collection(
+        &mut |report, path| parse_manifest(&mut zip, report, path),
+        &index,
+        &mut report,
+        &collection,
+        &mut manifests,
+    );
     validate_schema_versions_match(&mut report, &manifests);
     report.complete = matches!(report.status.as_str(), "valid" | "invalid");
     Ok(report)
@@ -811,7 +918,7 @@ fn validate_schema_version(report: &mut OaaValidationReport, manifest: &Value, p
 }
 
 fn validate_collection(
-    zip: &mut ZipArchive<fs::File>,
+    read_manifest: &mut impl FnMut(&mut OaaValidationReport, &str) -> Option<Value>,
     index: &ArchiveIndex,
     report: &mut OaaValidationReport,
     collection: &Value,
@@ -890,7 +997,7 @@ fn validate_collection(
             );
             continue;
         }
-        let Some(manifest) = parse_manifest(zip, report, path) else {
+        let Some(manifest) = read_manifest(report, path) else {
             continue;
         };
         manifests.insert(path.to_string(), manifest.clone());
@@ -925,7 +1032,7 @@ fn validate_collection(
             );
             continue;
         }
-        let Some(manifest) = parse_manifest(zip, report, path) else {
+        let Some(manifest) = read_manifest(report, path) else {
             continue;
         };
         manifests.insert(path.to_string(), manifest.clone());

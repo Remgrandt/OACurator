@@ -24,6 +24,7 @@ mod manifests;
 mod models;
 mod oaa;
 mod orphans;
+mod upgrade;
 
 pub use consistency::{
     CatalogConsistencyCheck, CatalogConsistencyReport, MissingArtworkFile, MissingArtworkManifest,
@@ -642,6 +643,16 @@ impl Catalog {
     {
         let total_started = Instant::now();
         let manifest_path = expand_user_path(&manifest_path.to_string_lossy());
+        upgrade::upgrade_collection(&manifest_path, |message| {
+            progress(WorkspaceLoadProgress {
+                phase: "open_collection".into(),
+                message: message.into(),
+                artworks_total: 0,
+                artworks_loaded: 0,
+                current_artwork: None,
+                done: false,
+            });
+        })?;
         let mut profiler = CollectionOpenProfiler::from_env(&manifest_path);
         let manifest_read_started = Instant::now();
         let manifest: CollectionManifest = read_json_manifest(&manifest_path)?;

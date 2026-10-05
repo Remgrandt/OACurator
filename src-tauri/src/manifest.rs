@@ -195,7 +195,9 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let contents = fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&contents)?)
+    Ok(serde_json::from_str(
+        contents.trim_start_matches('\u{feff}'),
+    )?)
 }
 
 pub fn write_json_manifest<T>(path: &Path, manifest: &T) -> Result<()>
@@ -239,12 +241,16 @@ where
     T: Serialize,
 {
     let contents = format!("{}\n", serde_json::to_string_pretty(manifest)?);
+    staged_manifest_bytes(path, contents.as_bytes())
+}
+
+pub(crate) fn staged_manifest_bytes(path: &Path, contents: &[u8]) -> Result<StagedJsonManifest> {
     let parent = path.parent().ok_or_else(|| {
         crate::AppError::Message(format!("Manifest path has no parent: {}", path.display()))
     })?;
     fs::create_dir_all(parent)?;
     let mut temporary = NamedTempFile::new_in(parent)?;
-    temporary.write_all(contents.as_bytes())?;
+    temporary.write_all(contents)?;
     temporary.as_file_mut().flush()?;
     temporary.as_file().sync_all()?;
     Ok(StagedJsonManifest {

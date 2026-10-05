@@ -1910,7 +1910,7 @@ fn extract_zip_file(
     Ok(())
 }
 
-fn reject_filesystem_redirections(path: &Path) -> Result<()> {
+pub(crate) fn reject_filesystem_redirections(path: &Path) -> Result<()> {
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) => {
@@ -1934,7 +1934,10 @@ fn reject_filesystem_redirections(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_extraction_paths(destination: &Path, paths: &BTreeSet<String>) -> Result<()> {
+pub(crate) fn validate_extraction_paths(
+    destination: &Path,
+    paths: &BTreeSet<String>,
+) -> Result<()> {
     reject_filesystem_redirections(destination)?;
     // Use a conservative portable destination map on every platform. Archive
     // validity remains case-sensitive; an unrepresentable destination is separate.

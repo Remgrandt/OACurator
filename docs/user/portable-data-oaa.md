@@ -27,6 +27,16 @@ Use **File > Import OAA Archive** and choose the archive file. OA Curator will a
 
 Imported archives can include Collection data, Galleries, Artworks, metadata, external-site links, and files.
 
+## Opening Older Collection Folders
+
+When you open an older Collection folder, OA Curator automatically upgrades its referenced Collection, Gallery, and Artwork manifests together to OAA 1.0. This also completes folders that contain a mixture of 0.1 and 1.0 manifests. Collections already using 1.0 are not rewritten just because you open them.
+
+The upgrade preserves metadata, private fields, extensions, and original scans. It checks the complete referenced manifest set before replacing any manifest. Unreferenced artwork folders are left alone. Missing scans remain available for the usual missing-file checks; a missing manifest, unsupported version, or incompatible metadata stops the upgrade and explains the problem.
+
+Before changing anything, OA Curator saves the original manifest contents in a `.oaa-1.0-backup-….json` file in the Collection folder. Keep this backup private: it contains the same private metadata as your Collection. If an upgrade is interrupted, opening the Collection again resumes it. A write failure attempts to restore the original manifests; if recovery cannot finish, opening stops and the backup is retained. Recovery will not overwrite manifests that have been edited separately since the upgrade began.
+
+This upgrades the local folder. It does not modify existing `.oaa` archive files. Use **File > Export OAA Archive** to create a new archive with archive-level validation.
+
 ## Exporting OAA
 
 Use **File > Export OAA Archive** when a Collection is open.

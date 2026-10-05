@@ -7,7 +7,15 @@ It imposes no OA Curator requirement on the OAA standard.
 
 - Specification: [oaa-spec v1.0.0](https://github.com/Original-Art-Archive/oaa-spec/tree/v1.0.0), commit `84942f6ec037cdd6b5bf9ba347f326e1bca56539`.
 - Reference validator: [oaa-validator v1.0.0](https://github.com/Original-Art-Archive/oaa-validator/tree/v1.0.0), commit `90f91b4fcf8010166c763a8650e67981361ac93c`.
-- Writers emit manifest `schema_version: "1.0"`. Readers also retain the historical 0.1 path. Existing local Collections do not undergo a bulk rewrite; normal edits write current manifests.
+- Writers emit manifest `schema_version: "1.0"`. Readers also retain the historical 0.1 path. Opening a legacy or mixed-version local Collection automatically upgrades all referenced manifests together before catalog hydration. Already-current manifests are not rewritten on open.
+
+## Local Collection upgrade
+
+Opening upgrades only explicitly supported 0.1 documents, including older children under a 1.0 root. It preflights the complete referenced set using the shared 1.0 metadata and cross-reference rules, verifies that the app can deserialize the result, and checks sizes of present attachments. It refuses unsupported versions, duplicate JSON members, unsafe or redirected paths, missing manifests, inconsistent references, and incompatible metadata before mutation. Missing media remains a catalog consistency issue; this metadata upgrade is not a claim of complete archive validation.
+
+For compatible documents, only the top-level version token changes. All other source bytes, including unknown fields, numeric spelling, extensions, private data, IDs, membership, and whitespace, are retained. No unreferenced records are discovered or rewritten, and media files are never modified. Backup journals contain the exact before/after manifest text, are synced before installation, and remain in `.oaa-1.0-backup-*.json` files in the Collection folder. These files contain private metadata and are not included in OA Curator's archive exports.
+
+Each replacement uses the existing staged atomic-file writer, with the collection root installed last. An on-disk pending pointer supports restart recovery; write errors attempt rollback. Recovery requires every file to match its recorded before or after contents and refuses external edits. This is recoverable multi-file replacement, not filesystem-wide atomicity or protection from another process racing a write. Upgrade preflight is limited to 100,000 manifests, 10 MiB per manifest, 64 MiB of total source metadata, and the existing JSON depth/numeric capacities. ZIP input files are unchanged.
 
 ## Reader and writer behavior
 
@@ -55,11 +63,21 @@ legacy 0.1 import, both import destinations, export privacy, retained metadata,
 ZIP64 and malformed ZIP streams, capacity outcomes, and destination path safety.
 Exported archives are also checked with the pinned reference validator above.
 
+Local upgrade regression coverage includes automatic legacy/mixed-version upgrades,
+exact preservation and backups, current-version no-op, invalid-input refusal,
+interrupted recovery and external-edit protection, and Windows replacement-failure rollback.
+
 Windows verification on 2026-10-03 for [the OAA 1.0 production update](https://github.com/Remgrandt/OACurator/commit/f98ca964911098cf7a26a5768f532e2b3865457d):
 
 - `npm run check:release` passed.
 - The isolated regression run passed 160 backend integration tests and 210 frontend tests. Four existing benchmark tests were ignored, and one private-maintainer documentation check was excluded from the public-source run.
 - The official OAA 1.0 validator accepted all 12 generated archives, covering three independent fixture families, both import destinations, and private/default export options.
+
+Local upgrade validation on Windows, 2026-10-04: release checks and final backend
+checks passed. An external harness passed 6 upgrade tests and 12 archive tests
+against the public-source library. The pinned official validator accepted both
+legacy and mixed-version folders upgraded by that library with `valid: true` and
+`complete: true`; original attachment hashes and backed-up manifest bytes matched.
 
 The verification evidence is from Windows. macOS/Linux extraction and packaging
 require their platform checks; archive validity alone does not establish those claims.

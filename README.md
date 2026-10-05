@@ -20,6 +20,7 @@ OA Curator is source-available freeware, not open source. You may view, build, i
 - Generate cached thumbnails and previews without modifying original files.
 - Import ComicArtFans and SNIKT.com CSV metadata.
 - Import OAA 1.0 and legacy 0.1 archives, and export OAA 1.0 archives for portable collector-owned data.
+- Automatically upgrade compatible older Collection folders to OAA 1.0 on open, with original metadata backups and interruption recovery.
 - Edit public metadata, gallery-site URLs, artist credits, and private collector fields.
 - Generate Basic and Premium PNG derivatives for web workflows.
 - Export Raremarq bulk-upload CSV files.
