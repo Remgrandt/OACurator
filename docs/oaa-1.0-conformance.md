@@ -79,7 +79,7 @@ against the public-source library. The pinned official validator accepted both
 legacy and mixed-version folders upgraded by that library with `valid: true` and
 `complete: true`; original attachment hashes and backed-up manifest bytes matched.
 
-Stale local attachment size correction (unreleased), 2026-10-05: a focused
+Stale local attachment size correction for 0.5.1, 2026-10-05: a focused
 regression reproduced the 0.5.0 open failure, then passed with this correction.
 The public release checks passed, and an external harness against this library
 passed 7 upgrade tests and 12 archive tests. These cover legacy and mixed-version
